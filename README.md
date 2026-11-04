@@ -1,6 +1,6 @@
 # OPERATOR VR Mod
 
-Play **OPERATOR** (Steam) in PC VR. It's built and tested with a **Meta Quest 3 through Virtual Desktop** and a **PS5 DualSense pad**.
+Play **OPERATOR** (Steam) in PC VR. It's built and tested with a **Meta Quest 3 through Virtual Desktop**, played with **Touch motion controllers** or a **PS5 DualSense pad**.
 
 This is an unofficial fan mod. It isn't made by or connected with the developers of OPERATOR.
 
@@ -29,7 +29,7 @@ This is an unofficial fan mod. It isn't made by or connected with the developers
 - **OPERATOR** on Steam.
 - **BepInEx 6 (IL2CPP build)**. Tested with `6.0.0-be.791`. It's the mod loader.
 - **A PC VR headset** with an OpenXR runtime. Tested on a Quest 3 with **Virtual Desktop** (its VDXR runtime). SteamVR and Quest Link should also work, but haven't been tested as much.
-- **A gamepad through Steam Input.** A PS5 DualSense with the included layout is recommended.
+- **Touch controllers or a gamepad.** Meta/Oculus Touch controllers (see [Motion controllers](#motion-controllers-oculus-touch-new-in-110)), or a gamepad through Steam Input; a PS5 DualSense with the included layout is recommended.
 - **A reasonably strong PC.** Tested on an RTX 5060 Ti: a steady 40 fps at 80 Hz with Virtual Desktop SSW (frame smoothing).
 
 ## Installing
@@ -97,15 +97,26 @@ The file `steam-input/OPERATOR-PS5-layout.vdf` is a Steam Input layout for the P
 
 If you use another pad, map its buttons to the same keyboard keys (they're listed in the `.vdf`).
 
-## Experimental: motion controllers (Quest Touch)
+## Motion controllers (Oculus Touch), new in 1.1.0
 
-There's an early mode for playing with Touch controllers instead of a pad:
-- **Aiming:** you aim with your right hand.
-- **Free left hand:** it can reach for things such as door handles.
-- **Menu laser:** the right controller points a laser at menus.
-- **Buttons:** they press the keys you have bound in the game.
+Version 1.1.0 adds full motion controls for **Oculus/Meta Touch controllers**. The PS5 pad still works exactly as before.
 
-It's **off by default** and not finished. Aiming and gun placement don't feel right yet, so the pad is the recommended way to play. To try it, set `TouchControls = true` under `[Controls]` in the settings file. The button mapping is the `TouchMap` setting just below it.
+**To switch them on:** set `TouchControls = true` under `[Controls]` in `BepInEx\config\com.operatorvr.mod.cfg`. The file `OPERATOR-VR-Touch-Controls.png` in the zip shows every button.
+
+- **Aim with your hand.** The gun points where the right controller points.
+- **Virtual stock.** Press the right grip: your right hand locks as the stock and your left hand steers the gun, which makes it much steadier. Press again to let go. **GUNSTOCK ACTIVATED** shows at the lower right while it's on.
+- **Lean by tilting your head** left or right (`HeadLeanAngle`, 8° by default).
+- **Vibration.** Both controllers kick when you fire, with short buzzes for the stock, double-taps and Interact.
+- **Tap, double-tap and hold actions:**
+  - **B:** tap to crouch, double-tap to vault, hold to kick.
+  - **X:** tap to reload, hold to check the magazine, double-tap to chamber a round or unjam.
+  - **Y:** tap to change fire mode, double-tap for the health and map screen.
+- **Two stick D-pads.** With a thumb resting on one controller's thumbrest, the other controller's stick becomes a D-pad. That gives you sights and magnifier, lasers, grenades, recenter, night vision, next weapon and the tablet.
+- **Menus and laptops:** point the laser and pull the right trigger to click. The right stick scrolls lists. Dragging works too, for example medication on the health screen.
+- **Weapon bench:** point at the gun, hold the trigger and swing the controller to turn it.
+- **Interact:** click the right stick when the prompt shows (TAKE, OPEN, MODIFY WEAPON).
+
+Every button can be remapped (`TouchMap`, `TouchDoubleTap`, `TouchHold`), and each setting is explained in the settings file.
 
 ## Settings
 
