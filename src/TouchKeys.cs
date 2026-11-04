@@ -57,7 +57,38 @@ public class TouchKeys : MonoBehaviour
         ["RightStickClick"] = (XRNode.RightHand, "Primary2DAxisClick", false),
         ["LeftStickClick"] = (XRNode.LeftHand, "Primary2DAxisClick", false),
         ["Menu"] = (XRNode.LeftHand, "MenuButton", false),
+        ["LeftThumbrest"] = (XRNode.LeftHand, "ThumbrestTouch", false),
+        ["RightThumbrest"] = (XRNode.RightHand, "ThumbrestTouch", false),
     };
+
+    // Virtual D-pads: while Controls.TouchDpadButton is held the right stick is a D-pad (and doesn't turn); while
+    // Controls.TouchLeftDpadButton is held the left stick is a second one, LeftDpad... (and doesn't walk). A
+    // direction counts past 70% that way, and more that way than sideways
+    private static readonly Dictionary<string, (Vector2 dir, bool leftStick)> DpadDirs = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["DpadUp"] = (Vector2.up, false),
+        ["DpadDown"] = (Vector2.down, false),
+        ["DpadLeft"] = (Vector2.left, false),
+        ["DpadRight"] = (Vector2.right, false),
+        ["LeftDpadUp"] = (Vector2.up, true),
+        ["LeftDpadDown"] = (Vector2.down, true),
+        ["LeftDpadLeft"] = (Vector2.left, true),
+        ["LeftDpadRight"] = (Vector2.right, true),
+    };
+
+    private static bool IsButton(string name) => Buttons.ContainsKey(name) || DpadDirs.ContainsKey(name);
+
+    // Not on the weapon bench: there the right stick turns the weapon and scrolls, and a left thumb resting on its
+    // thumbrest made it a D-pad instead (2026-11-04; the D-pad is wanted in play only)
+    private static bool DpadHeld() => !WeaponBench.Open && Held(Plugin.TouchDpadButton.Value);
+
+    private static bool LeftDpadHeld() => Held(Plugin.TouchLeftDpadButton.Value);
+
+    private static bool Held(string button)
+    {
+        var b = button?.Trim();
+        return !string.IsNullOrEmpty(b) && Buttons.ContainsKey(b) && IsPressed(b);
+    }
 
     private class Mapping
     {
@@ -68,6 +99,7 @@ public class TouchKeys : MonoBehaviour
     }
 
     private readonly List<Mapping> _map = new();
+    private readonly Dictionary<string, Mapping> _interactTwins = new(StringComparer.OrdinalIgnoreCase);
     private readonly Mapping[] _walk = new Mapping[4]; // forward, back, left, right
     private float _nextBindRead;
     private bool _loggedStart;
@@ -117,32 +149,73 @@ public class TouchKeys : MonoBehaviour
             // In a menu (or at the laptop) A is the mouse click and the trigger does nothing: the trigger (Shoot, the
             // left mouse button) clicked the menu but also fired the gun
             var inMenu = VRPointer.Target != null;
-            UpdateMenuClick(inMenu && IsPressed("A"));
+            // The menu click: the right trigger (Controls.MenuClickButton; it was A until 2026-11-04)
+            var clickButton = Plugin.MenuClickButton.Value?.Trim() ?? "";
+            UpdateMenuClick(inMenu && Held(clickButton));
+
+            // Interact can be on more than one button (A and the right stick click): hold-to-interact keeps one state,
+            // so it runs once, on the first of them, held while any of them is (A doesn't count in a menu)
+            var holdInteract = Plugin.HoldToInteract.Value;
+            Mapping interactLead = null;
+            var interactDown = false;
+            if (holdInteract)
+                foreach (var m in _map)
+                    if (string.Equals(m.Action, "Interact", StringComparison.OrdinalIgnoreCase))
+                    {
+                        interactLead ??= m;
+                        if (!(inMenu && m.Button == "A") && IsPressed(m.Button))
+                            interactDown = true;
+                    }
+
+            // A double tap on an Interact button (TouchDoubleTap, e.g. A=Mouse3: the flashlight) runs alongside
+            // hold-to-interact, through a stand-in mapping with no key of its own, so taps and holds still interact
+            // straight away and only the double tap adds its keys
+            if (holdInteract)
+                foreach (var m in _map)
+                    if (string.Equals(m.Action, "Interact", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (!_interactTwins.TryGetValue(m.Button, out var twin))
+                            _interactTwins[m.Button] = twin = new Mapping { Button = m.Button, Action = "(double tap)" };
+                        UpdateButton(twin, !(inMenu && m.Button == "A") && IsPressed(m.Button));
+                    }
+
             foreach (var m in _map)
             {
-                if (inMenu && (m.Button == "A" || string.Equals(m.Action, "Shoot", StringComparison.OrdinalIgnoreCase)))
+                if (holdInteract && string.Equals(m.Action, "Interact", StringComparison.OrdinalIgnoreCase))
                 {
-                    if (m.Button == "A" && Plugin.HoldToInteract.Value && string.Equals(m.Action, "Interact", StringComparison.OrdinalIgnoreCase))
-                        UpdateInteract(m, false);
+                    if (m == interactLead)
+                        UpdateInteract(m, interactDown);
                     else
                         Set(m, false);
                     continue;
                 }
-                if (Plugin.HoldToInteract.Value && string.Equals(m.Action, "Interact", StringComparison.OrdinalIgnoreCase))
-                    UpdateInteract(m, IsPressed(m.Button));
-                else
-                    UpdateButton(m, IsPressed(m.Button));
+                if (inMenu && (m.Button == "A" || string.Equals(m.Button, clickButton, StringComparison.OrdinalIgnoreCase) ||
+                               string.Equals(m.Action, "Shoot", StringComparison.OrdinalIgnoreCase)))
+                {
+                    Set(m, false);
+                    continue;
+                }
+                UpdateButton(m, IsPressed(m.Button));
             }
 
-            // Left stick: walk keys, past a third of the way
-            var stick = Stick(left);
+            // Left stick: walk keys, past a third of the way (not while it's the left virtual D-pad)
+            var stick = LeftDpadHeld() ? Vector2.zero : Stick(left);
             Set(_walk[0], stick.y > 0.35f);
             Set(_walk[1], stick.y < -0.35f);
             Set(_walk[2], stick.x < -0.35f);
             Set(_walk[3], stick.x > 0.35f);
 
-            // Right stick turns; the hand aims. Not while a menu or laptop screen takes the mouse
-            var look = Stick(right);
+            // Right stick turns; the hand aims. Not while a menu or laptop screen takes the mouse, nor while the
+            // right stick is the virtual D-pad
+            var look = DpadHeld() ? Vector2.zero : Stick(right);
+            // On the weapon bench the right stick's left/right turns the weapon round
+            if (WeaponBench.Open && Mathf.Abs(look.x) > 0.15f)
+                WeaponBench.SpinInput += look.x * Plugin.BenchSpinSpeed.Value * Time.unscaledDeltaTime;
+            UpdateBenchDrag(right, inMenu && Held(clickButton));
+            // In a menu the right stick's up/down scrolls (the mouse wheel); on the bench too, for its parts list
+            UpdateMenuScroll(inMenu ? look.y : 0f);
+            UpdateHeadLean(inMenu);
+            StockOn = _stockOn && Time.unscaledTime - _stockLastCall < 0.5f;
             var curve = look.sqrMagnitude > 0.15f * 0.15f ? look * look.magnitude : Vector2.zero; // finer near the centre
             var move = Vector2.zero;
 
@@ -220,52 +293,90 @@ public class TouchKeys : MonoBehaviour
     private float _interactSince;
     private float _lastAimGap = 999f;
 
+    // A click is a whole action (2026-11-04, Interact on the right stick click): the swing to where you look waited up
+    // to 0.5 s before pressing F, and a quick click was let go first, so ~20 clicks at the weapon wall, bench and door
+    // never sent F. And at the bench the game already showed MODIFY WEAPON on the hand's aim, but the swing moved the
+    // aim off it. Now: if the game's own scan already finds something under its aim, F goes at once with no swing;
+    // otherwise the swing carries on after the click is let go until F has been pressed, and F stays down at least
+    // InteractMinHold so the game sees it
+    private bool _interactWasDown;
+    private float _sentAt;
+    private const float InteractMinHold = 0.15f;
+
     private void UpdateInteract(Mapping m, bool down)
     {
-        if (!down)
-        {
-            if (_lookToInteract)
-                Plugin.Logger.LogInfo("[Touch] Interact released: aim back on the hand");
-            _lookToInteract = false;
-            _interactSent = false;
-            Set(m, false);
-            // Calling the switch directly left it switched on (the game never saw F let go), so the target ran to
-            // the end, the other part offered nothing and the aim stayed locked: switch it off ourselves
-            if (_lastUsedHandle != null)
-            {
-                try
-                {
-                    _lastUsedHandle.inputActive = false;
-                    Plugin.Logger.LogInfo($"[Touch] Range switch '{_lastUsedHandle.name}' let go");
-                }
-                catch { }
-                _lastUsedHandle = null;
-            }
-            return;
-        }
+        var now = Time.unscaledTime;
+        var pressedNow = down && !_interactWasDown;
+        _interactWasDown = down;
+
         // Range switch: anywhere in the booth, gun ahead = target away, gun at the floor = target back, used directly
         // every frame, with F held as well so the game sees a real hold and release. The gun stays on the hand here
         // (no swinging to where you look)
-        if (UseGazedRangeHandle())
+        if (down && UseGazedRangeHandle())
         {
             _lookToInteract = false;
             Set(m, true);
             return;
         }
-        if (!_lookToInteract)
+
+        if (pressedNow && !_lookToInteract && !_interactSent)
         {
-            _lookToInteract = true;
-            _interactSince = Time.unscaledTime;
-            _lastAimGap = 999f;
-            Plugin.Logger.LogInfo("[Touch] Interact held: aiming where you look");
+            if (InteractScanLog.Found && now - InteractScanLog.ScannedAt < 0.3f)
+            {
+                // The game already offers something where it aims: use it now
+                _interactSent = true;
+                _sentAt = now;
+                Set(m, true);
+                Plugin.Logger.LogInfo("[Touch] Interact pressed at once (the game already aims at something usable)");
+                Haptics.Pulse(XRNode.RightHand, 0.25f, 0.03f);
+            }
+            else
+            {
+                _lookToInteract = true;
+                _interactSince = now;
+                _lastAimGap = 999f;
+                // How far the head (the view) is from the game's body: the scan starts from the body
+                var offset = -1f;
+                if (HeadTracking.TryTrackingToWorld(InputTracking.GetLocalPosition(XRNode.CenterEye),
+                        InputTracking.GetLocalRotation(XRNode.CenterEye), out var headWorld, out _) &&
+                    HeadTracking.TryGetGameCameraPose(out _, out var bodyPos, out _))
+                    offset = Vector3.Distance(new Vector3(headWorld.x, 0f, headWorld.z), new Vector3(bodyPos.x, 0f, bodyPos.z));
+                Plugin.Logger.LogInfo($"[Touch] Interact ({m.Button}): aiming where you look first; head {offset:0.00} m from the game's body");
+            }
         }
 
-        // Press Interact once the aim has reached where you look (or after half a second regardless)
-        if (!_interactSent && (_lastAimGap < 3f || Time.unscaledTime - _interactSince > 0.5f))
+        // Press Interact once the aim has reached where you look (or after half a second regardless), even if the
+        // click has already been let go
+        if (_lookToInteract && !_interactSent && (_lastAimGap < 3f || now - _interactSince > 0.5f))
         {
             _interactSent = true;
+            _sentAt = now;
             Set(m, true);
             Plugin.Logger.LogInfo($"[Touch] Interact pressed (aim {_lastAimGap:0.0}° off where you look)");
+            Haptics.Pulse(XRNode.RightHand, 0.25f, 0.03f);
+        }
+
+        // Done once the button is up, any swing has pressed F, and F has been down long enough
+        var swinging = _lookToInteract && !_interactSent;
+        if (down || swinging || (_interactSent && now - _sentAt < InteractMinHold))
+            return;
+
+        if (_lookToInteract)
+            Plugin.Logger.LogInfo("[Touch] Interact let go: aim back on the hand");
+        _lookToInteract = false;
+        _interactSent = false;
+        Set(m, false);
+        // Calling the switch directly left it switched on (the game never saw F let go), so the target ran to
+        // the end, the other part offered nothing and the aim stayed locked: switch it off ourselves
+        if (_lastUsedHandle != null)
+        {
+            try
+            {
+                _lastUsedHandle.inputActive = false;
+                Plugin.Logger.LogInfo($"[Touch] Range switch '{_lastUsedHandle.name}' let go");
+            }
+            catch { }
+            _lastUsedHandle = null;
         }
     }
 
@@ -392,7 +503,7 @@ public class TouchKeys : MonoBehaviour
     /// <summary>True while the player is holding a range target handle (its inputActive), which the game moves with the mouse.</summary>
     private bool IsDraggingHandle()
     {
-        LogPromptChanges();
+        if (Plugin.Diagnostics.Value) LogPromptChanges();
         RefreshHandles();
 
         InteractableRangeTargetHandle active = null;
@@ -453,6 +564,8 @@ public class TouchKeys : MonoBehaviour
         }
 
         var dir = worldRot * Vector3.forward;
+        if (!_lookToInteract)
+            dir = VirtualStock(right, dir);
         // Unity pitch: positive looks down (the hand offset only applies to the hand)
         var handPitch = -Mathf.Asin(Mathf.Clamp(dir.y, -1f, 1f)) * Mathf.Rad2Deg + (_lookToInteract ? 0f : Plugin.HandAimPitchOffset.Value);
         var handYaw = Mathf.Atan2(dir.x, dir.z) * Mathf.Rad2Deg;
@@ -483,6 +596,8 @@ public class TouchKeys : MonoBehaviour
                     _yawFailed = true;
                     _yawRetryAt = Time.unscaledTime + 3f;
                     Plugin.Logger.LogWarning($"[Touch] Left/right hand aim is running away (gap {_yawGapAtStart:0}° -> {yawGap:0}° in a second); paused for 3 s");
+                    // Twice it ran away with the virtual stock on (2026-11-04): switch the stock off cleanly too
+                    ResetStock("the aim ran away");
                     yawGap = 0f;
                 }
             }
@@ -503,11 +618,314 @@ public class TouchKeys : MonoBehaviour
         return px;
     }
 
+    // Virtual stock on a button (Controls.VirtualStockButton, the right grip; a press toggles it with
+    // VirtualStockToggle, else held). The right controller where you pressed is the stock, locked against your head
+    // (it turns with your head's left/right), and moving the left controller left/right/up/down aims: the aim turns
+    // left/right and up/down by exactly as much as the line from the stock to the left hand does since you pressed,
+    // starting from where the right hand was aiming (no jump).
+    // History (2026-11-04): engaging by bringing the hands together jumped and flickered. The next version turned a
+    // whole frame built on the line, and the log showed it engaging with the left hand 60-97° off the aim (beside the
+    // right hand, not in front): the aim then moved sideways to the hand and was hard to steer, and in toggle mode it
+    // stayed on with the aim stuck ("controls went static"). Now it engages only with the left hand in front, uses
+    // plain left/right + up/down changes, and switches itself off if the left hand leaves (taken off the gun)
+    private bool _stockOn;
+    private float _stockBlend;
+    private Vector3 _stockLine0, _stockLine, _stockAim0;
+    private Vector3 _stockPivot;     // the right controller where you pressed, in the head's yaw frame (tracking space)
+    private bool _stockButtonWas, _stockToggled, _stockSqueezed, _stockVoiceOn;
+    private float _stockToggledAt = -10f;
+
+    /// <summary>The stock button, with a firm squeeze needed and a clear release (for the grip or a trigger).</summary>
+    private bool StockButtonDown()
+    {
+        var name = Plugin.VirtualStockButton.Value?.Trim() ?? "";
+        if (!Buttons.TryGetValue(name, out var b))
+            return false;
+        if (!b.analog)
+            return IsPressed(name);
+        var d = InputDevices.GetDeviceAtXRNode(b.hand);
+        if (!d.isValid || !XRFeature.Float(d.deviceId, b.usage, out var v))
+            return _stockSqueezed = false;
+        _stockSqueezed = _stockSqueezed ? v > 0.35f : v > 0.75f;
+        return _stockSqueezed;
+    }
+    private float _stockAwaySince = -1f;
+
+
+    private static float Yaw(Vector3 d) => Mathf.Atan2(d.x, d.z) * Mathf.Rad2Deg;
+    private static float Pitch(Vector3 d) => Mathf.Asin(Mathf.Clamp(d.y, -1f, 1f)) * Mathf.Rad2Deg;
+
+    private float _stockLastCall = -10f;
+
+    /// <summary>The virtual stock is on (for the status display).</summary>
+    internal static bool StockOn { get; private set; }
+
+    /// <summary>Which controller a Touch button (or virtual D-pad direction) is on.</summary>
+    private static XRNode HandOf(string button)
+    {
+        if (Buttons.TryGetValue(button, out var b))
+            return b.hand;
+        if (DpadDirs.TryGetValue(button, out var d))
+            return d.leftStick ? XRNode.LeftHand : XRNode.RightHand;
+        return XRNode.RightHand;
+    }
+
+    // Lean by tilting your head (Controls.HeadLean): the game leans only while Q/E is held, so the key is held while
+    // the head is tilted past HeadLeanAngle, and let go once it's back under half of that
+    private int _headLean;   // -1 left (Q held), 0 upright, 1 right (E held)
+    private float _tiltRest, _lastTilt;
+
+    // Lean speed (Controls.LeanSpeed): the lean with a weapon in hand was slow (2026-11-04). The game's PlayerLean
+    // (MasterController.playerLean) moves the weapon's lean at weapLeanSpeed: that's multiplied, once per PlayerLean
+    private MasterController _master;
+    private float _nextMasterFind;
+    private IntPtr _leanSped;
+    private float _leanSpeedBase, _leanSpeedApplied;
+
+    private void ApplyLeanSpeed()
+    {
+        try
+        {
+            if (_master == null && Time.unscaledTime >= _nextMasterFind)
+            {
+                _nextMasterFind = Time.unscaledTime + 3f;
+                foreach (var o in UnityEngine.Object.FindObjectsByType(Il2CppType.Of<MasterController>(), FindObjectsSortMode.None))
+                {
+                    var mc = o.TryCast<MasterController>();
+                    if (mc != null && mc.transform.root.name.Contains("MyPlayer"))
+                    {
+                        _master = mc;
+                        break;
+                    }
+                }
+            }
+            var lean = _master != null ? _master.playerLean : null;
+            if (lean == null)
+                return;
+            var k = Mathf.Clamp(Plugin.LeanSpeed.Value, 0.25f, 5f);
+            if (lean.Pointer != _leanSped)
+            {
+                _leanSped = lean.Pointer;
+                _leanSpeedBase = lean.weapLeanSpeed;
+                _leanSpeedApplied = -1f;
+            }
+            var want = _leanSpeedBase * k;
+            if (Mathf.Abs(lean.weapLeanSpeed - want) > 1e-4f)
+            {
+                lean.weapLeanSpeed = want;
+                if (_leanSpeedApplied < 0f)
+                    Plugin.Logger.LogInfo($"[Touch] Lean speed x{k:0.0}: weapon lean {_leanSpeedBase:0.##} -> {want:0.##} " +
+                                          $"(lean output {lean.outputMin:0.##}..{lean.outputMax:0.##}, multiplier {lean.multiplier:0.##})");
+                _leanSpeedApplied = want;
+            }
+        }
+        catch (Exception e)
+        {
+            _master = null;
+            _nextMasterFind = Time.unscaledTime + 10f;
+            Plugin.Logger.LogWarning($"[Touch] Lean speed: {e.GetType().Name}: {e.Message}");
+        }
+    }
+
+    private void UpdateHeadLean(bool inMenu)
+    {
+        if (Time.frameCount % 30 == 0)
+            ApplyLeanSpeed();
+        var want = 0;
+        if (Plugin.HeadLean.Value && !inMenu && !WeaponBench.Open)
+        {
+            var rot = InputTracking.GetLocalRotation(XRNode.CenterEye);
+            var yaw = Quaternion.Euler(0f, rot.eulerAngles.y, 0f);
+            // How far the top of the head leans right (+) or left (-), in degrees
+            var raw = Mathf.Asin(Mathf.Clamp(Vector3.Dot(rot * Vector3.up, yaw * Vector3.right), -1f, 1f)) * Mathf.Rad2Deg;
+            var on = Mathf.Max(3f, Plugin.HeadLeanAngle.Value);
+            var off = on * 0.5f;
+            // Measured from how you normally hold your head, not from dead level: left lean came slower than right
+            // (2026-11-04), as if the head (or the headset on it) sat a little tilted right, so left needed more.
+            // The upright tilt is learnt slowly (over ~5 s) while you're not leaning
+            if (_headLean == 0 && Mathf.Abs(raw - _tiltRest) < off)
+                _tiltRest = Mathf.Lerp(_tiltRest, raw, 1f - Mathf.Exp(-0.2f * Time.unscaledDeltaTime));
+            var tilt = raw - _tiltRest;
+            _lastTilt = tilt;
+            want = _headLean switch
+            {
+                < 0 => tilt < -off ? -1 : tilt > on ? 1 : 0,
+                > 0 => tilt > off ? 1 : tilt < -on ? -1 : 0,
+                _ => tilt < -on ? -1 : tilt > on ? 1 : 0,
+            };
+        }
+        if (want == _headLean)
+            return;
+        if (_headLean != 0)
+            Press(_headLean < 0 ? (int)KeyCode.Q : (int)KeyCode.E, false);
+        if (want != 0)
+            Press(want < 0 ? (int)KeyCode.Q : (int)KeyCode.E, true);
+        Plugin.Logger.LogInfo($"[Touch] Head lean: {(want < 0 ? "lean left" : want > 0 ? "lean right" : "upright")} " +
+                              $"(tilt {_lastTilt:0.0}°, your upright is {_tiltRest:0.0}°)");
+        _headLean = want;
+    }
+
+    /// <summary>
+    /// Switches the virtual stock off at once and forgets it all (no blend back), so the next press starts fresh
+    /// from where the right hand points. Used when the aim runs away, and after a gap (a menu, the laptop, holding
+    /// Interact, a load), where a stock left on came back aiming at the old line.
+    /// </summary>
+    private void ResetStock(string why)
+    {
+        var was = _stockOn || _stockToggled || _stockBlend > 0f;
+        _stockOn = false;
+        _stockToggled = false;
+        _stockVoiceOn = false;
+        _stockBlend = 0f;
+        _stockAwaySince = -1f;
+        _yawDivergingFor = 0f;
+        if (was)
+        {
+            Plugin.Logger.LogInfo($"[Touch] Virtual stock reset ({why}): aiming with the right controller");
+            Haptics.Pulse(XRNode.RightHand, 0.3f, 0.04f);
+        }
+    }
+
+    private Vector3 VirtualStock(UnityEngine.XR.InputDevice right, Vector3 handDir)
+    {
+        // Not called for a while (menu, laptop, Interact held, loading): start clean
+        if (Time.unscaledTime - _stockLastCall > 0.5f)
+            ResetStock("paused for a while");
+        _stockLastCall = Time.unscaledTime;
+        var left = InputDevices.GetDeviceAtXRNode(XRNode.LeftHand);
+        // Toggle (VirtualStockToggle): one press turns it on, the next turns it off; otherwise on while held
+        // A grip resting half-squeezed chattered across 50% and toggled the stock on and off several times a second,
+        // leaving it on with the right hand ignored (log 2026-11-04, Georgia): a squeeze counts past 75% and the grip
+        // must open below 35% before the next, and a toggle needs 0.4 s since the last
+        var button = Plugin.VirtualStock.Value && StockButtonDown();
+        var pressedNow = button && !_stockButtonWas && Time.unscaledTime - _stockToggledAt > 0.4f;
+        if (pressedNow)
+        {
+            _stockToggled = !_stockToggled;
+            _stockToggledAt = Time.unscaledTime;
+        }
+        _stockButtonWas = button;
+        if (!Plugin.VirtualStock.Value)
+            _stockToggled = false;
+        // Spoken "activate gunstock" / "deactivate gunstock" (VoiceCommands). Already on: just answer again
+        var spoken = VoiceBridge.TakeStockCommand();
+        if (spoken == 1)
+        {
+            if (_stockOn)
+                VoiceBridge.Stock();
+            _stockToggled = _stockVoiceOn = true;
+        }
+        else if (spoken == 2)
+            _stockToggled = _stockVoiceOn = false;
+        else if (pressedNow)
+            _stockVoiceOn = false;   // a press takes over from the voice
+        var want = Plugin.VirtualStockToggle.Value ? _stockToggled : button || _stockVoiceOn;
+        var headPos = InputTracking.GetLocalPosition(XRNode.CenterEye);
+        var headYaw = Quaternion.Euler(0f, InputTracking.GetLocalRotation(XRNode.CenterEye).eulerAngles.y, 0f);
+
+        // The line from the stock to the left hand, in the game world (so turning with the stick turns it too)
+        var haveLine = false;
+        var line = Vector3.zero;
+        var dist = 0f;
+        if (want && left.isValid &&
+            XRFeature.Vector3(right.deviceId, "DevicePosition", out var rp) &&
+            XRFeature.Vector3(left.deviceId, "DevicePosition", out var lp))
+        {
+            var pivotLocal = _stockOn ? _stockPivot : Quaternion.Inverse(headYaw) * (rp - headPos);
+            var pivot = headPos + headYaw * pivotLocal;
+            var l = lp - pivot;
+            dist = l.magnitude;
+            if (dist > 0.05f && HeadTracking.TryTrackingToWorld(pivot, Quaternion.LookRotation(l, Vector3.up), out _, out var rot))
+            {
+                line = rot * Vector3.forward;
+                haveLine = true;
+                if (!_stockOn)
+                    _stockPivot = pivotLocal;
+            }
+        }
+
+        // The left hand can be anywhere (the user's choice, 2026-11-04: beside the right hand or far from it): the aim
+        // only follows how the line turns, so where it starts doesn't matter
+        if (want && !_stockOn && haveLine)
+        {
+            var off = Vector3.Angle(line, handDir);
+            {
+                _stockOn = true;
+                Haptics.Pulse(XRNode.RightHand, 0.5f, 0.08f);
+                VoiceBridge.Stock();
+                _stockLine0 = _stockLine = line;
+                _stockAim0 = handDir;
+                _stockAwaySince = -1f;
+                Plugin.Logger.LogInfo($"[Touch] Virtual stock on (left hand {dist * 100f:0} cm from the stock, {off:0}° off " +
+                                      "the aim): moving the left hand aims");
+            }
+        }
+        else if (_stockOn && !want)
+        {
+            _stockOn = false;
+            Plugin.Logger.LogInfo("[Touch] Virtual stock off: aiming with the right controller");
+            Haptics.Pulse(XRNode.RightHand, 0.3f, 0.04f);
+        }
+        else if (_stockOn)
+        {
+            // Left controller lost (tracking): switch off by itself after half a second. Distance no longer counts
+            if (!haveLine)
+            {
+                if (_stockAwaySince < 0f)
+                    _stockAwaySince = Time.unscaledTime;
+                else if (Time.unscaledTime - _stockAwaySince > 0.5f)
+                {
+                    _stockOn = false;
+                    _stockToggled = false;
+                    Plugin.Logger.LogInfo($"[Touch] Virtual stock off by itself: left hand {dist * 100f:0} cm from the stock");
+                }
+            }
+            else
+                _stockAwaySince = -1f;
+        }
+
+        // Blend over ~0.2 s so the aim doesn't jump when the stock engages or lets go
+        var dt = Time.unscaledDeltaTime;
+        _stockBlend = Mathf.MoveTowards(_stockBlend, _stockOn ? 1f : 0f, dt * 5f);
+        if (_stockOn && haveLine)
+            _stockLine = Vector3.Slerp(_stockLine, line, 1f - Mathf.Exp(-25f * dt)).normalized;   // light smoothing
+        if (_stockBlend <= 0f)
+            return handDir;
+
+        // The aim at engage, turned left/right and up/down by as much as the line has turned since
+        var yaw = Yaw(_stockAim0) + Mathf.DeltaAngle(Yaw(_stockLine0), Yaw(_stockLine));
+        var pitch = Mathf.Clamp(Pitch(_stockAim0) + Pitch(_stockLine) - Pitch(_stockLine0), -85f, 85f);
+        var stockAim = Quaternion.Euler(-pitch, yaw, 0f) * Vector3.forward;
+        return Vector3.Slerp(handDir, stockAim, _stockBlend).normalized;
+    }
+
     private static Vector2 Stick(UnityEngine.XR.InputDevice d) =>
         d.isValid && XRFeature.Vector2(d.deviceId, "Primary2DAxis", out var v) ? v : Vector2.zero;
 
+    private static readonly Dictionary<string, bool> s_dpadDown = new(StringComparer.OrdinalIgnoreCase);
+
     private static bool IsPressed(string button)
     {
+        if (DpadDirs.TryGetValue(button, out var pad))
+        {
+            if (!(pad.leftStick ? LeftDpadHeld() : DpadHeld()))
+            {
+                s_dpadDown[button] = false;
+                return false;
+            }
+            var dir = pad.dir;
+            var v = Stick(InputDevices.GetDeviceAtXRNode(pad.leftStick ? XRNode.LeftHand : XRNode.RightHand));
+            var along = Vector2.Dot(v, dir);
+            // Pressed past 70% (and more that way than sideways); let go only once back under 40%. Without the gap a
+            // single flick chattered across 70% and counted as a double tap (LeftDpadRight: grenades did the unjam,
+            // 2026-11-04)
+            s_dpadDown.TryGetValue(button, out var was);
+            var now = was
+                ? along > 0.4f
+                : along > 0.7f && along > Mathf.Abs(v.x * dir.y) + Mathf.Abs(v.y * dir.x);
+            s_dpadDown[button] = now;
+            return now;
+        }
         if (!Buttons.TryGetValue(button, out var b))
             return false;
         var d = InputDevices.GetDeviceAtXRNode(b.hand);
@@ -558,6 +976,23 @@ public class TouchKeys : MonoBehaviour
         {
             if (string.Equals(action, "Escape", StringComparison.OrdinalIgnoreCase))
                 return 27; // KeyCode.Escape
+            if (string.Equals(action, "Recenter", StringComparison.OrdinalIgnoreCase))
+                return 291; // KeyCode.F10, which HeadTracking always reads as recenter
+            // The mod's own keys that PadMacros reads (a letter or digit): next weapon, and Run = the console-style
+            // run toggle (click to start running, click again or stop moving forward to walk), and ChamberRound
+            // (unjam / chamber a round: the game's Left Shift + T, which only works with Shift down first, so it goes
+            // through ManualReloadKey and PadMacros presses the keys in order)
+            var modKey = string.Equals(action, "NextWeapon", StringComparison.OrdinalIgnoreCase) ? Plugin.NextWeaponKey
+                       : string.Equals(action, "Run", StringComparison.OrdinalIgnoreCase) ? Plugin.RunKey
+                       : string.Equals(action, "ChamberRound", StringComparison.OrdinalIgnoreCase) ? Plugin.ManualReloadKey
+                       : null;
+            if (modKey != null)
+            {
+                var k = modKey.Value?.Trim() ?? "";
+                if (k.Length != 1 || !char.IsLetterOrDigit(k[0]))
+                    return 0;
+                return char.IsDigit(k[0]) ? k[0] : char.ToLowerInvariant(k[0]); // KeyCode.Alpha0-9 / KeyCode.A-Z
+            }
             if (!Enum.TryParse<InputKey>(action, true, out var key) || (int)key >= binds.Length || binds[(int)key] == null)
                 return 0;
             return (int)binds[(int)key].KeyBind.PrimaryKey;
@@ -571,7 +1006,7 @@ public class TouchKeys : MonoBehaviour
                 continue;
             var button = kv[0].Trim();
             var action = kv[1].Trim();
-            if (!Buttons.ContainsKey(button))
+            if (!IsButton(button))
                 continue;
             var keyCode = KeyFor(action);
             if (keyCode == 0)
@@ -622,6 +1057,59 @@ public class TouchKeys : MonoBehaviour
                                   $"; left stick = {string.Join("/", Array.ConvertAll(_walk, w => ((KeyCode)w.KeyCode).ToString()))}");
     }
 
+    // Bench drag (2026-11-04): with the arrow on the weapon (empty space, not the page), holding the click and swinging
+    // the right controller left/right turns the weapon, as dragging with the mouse does. The game's own drag reads the
+    // mouse's movement, and the laser places the arrow without any (the log: "weapon turned 0.0°" on every press)
+    private bool _benchDragging, _benchClickWas;
+    private float _benchDragYaw;
+
+    private void UpdateBenchDrag(UnityEngine.XR.InputDevice right, bool click)
+    {
+        var pressed = click && !_benchClickWas;
+        _benchClickWas = click;
+        if (!WeaponBench.Open || !click || !right.isValid ||
+            !XRFeature.Quaternion(right.deviceId, "PointerRotation", out var rot))
+        {
+            _benchDragging = false;
+            return;
+        }
+        var fwd = rot * Vector3.forward;
+        var yaw = Mathf.Atan2(fwd.x, fwd.z) * Mathf.Rad2Deg;
+        if (pressed)
+        {
+            _benchDragging = !VRPointer.ArrowOverMenu();
+            _benchDragYaw = yaw;
+            if (_benchDragging)
+                Plugin.Logger.LogInfo("[Touch] Bench: dragging the weapon round with the controller");
+            return;
+        }
+        if (!_benchDragging)
+            return;
+        WeaponBench.SpinInput += Mathf.DeltaAngle(_benchDragYaw, yaw) * Plugin.BenchDragGain.Value;
+        _benchDragYaw = yaw;
+    }
+
+    // Right stick up/down as the mouse wheel in menus: a notch every so often, faster the further it's pushed
+    private float _scrollAcc;
+    private const uint MOUSEEVENTF_WHEEL = 0x0800;
+
+    private void UpdateMenuScroll(float y)
+    {
+        if (Mathf.Abs(y) < 0.3f)
+        {
+            _scrollAcc = 0f;
+            return;
+        }
+        // Up to 12 notches a second at full tilt
+        _scrollAcc += y * 12f * Time.unscaledDeltaTime;
+        while (Mathf.Abs(_scrollAcc) >= 1f)
+        {
+            var up = _scrollAcc > 0f;
+            _scrollAcc -= up ? 1f : -1f;
+            Mouse(MOUSEEVENTF_WHEEL, 0, 0, unchecked((uint)(up ? 120 : -120)));
+        }
+    }
+
     // A as the left mouse button while a menu is open
     private bool _menuClickDown;
     private const int KeyMouse0 = 323; // KeyCode.Mouse0
@@ -656,13 +1144,22 @@ public class TouchKeys : MonoBehaviour
     // hold = check the magazine, double tap = manual reload, so the first tap mustn't reload on its own)
     private enum TapState { Idle, FirstDown, Holding, WaitSecond, TapOut, Combo }
 
+    // Hold: a long press taps other keys instead of holding the button's own (Controls.TouchHold, e.g. B=Space: B
+    // tap = crouch, hold = kick). A double tap can also hold its keys ("Hold:Space": vault is Space held) for as long
+    // as the button stays down, at least ComboMinHold
+    private const float ComboMinHold = 0.6f;
+
     private class DoubleTap
     {
-        public int[] Keys;
+        public int[] Keys;       // double tap (null = none)
+        public bool KeysHeld;    // double tap holds Keys while the button is held, not a tap
+        public int[] HoldKeys;   // long press taps these (null = hold the button's own key)
+        public int[] Active;     // the combination being pressed now
+        public bool ActiveHeld;
         public bool WasDown;
         public TapState State;
         public float Since;      // when the current state started
-        public int Pressed;      // how many of Keys are down (combo)
+        public int Pressed;      // how many of Active are down (combo)
         public bool Releasing;   // letting go: never press again (without this T bounced down/up forever)
     }
 
@@ -689,6 +1186,15 @@ public class TouchKeys : MonoBehaviour
             dt.Since = now;
         }
 
+        void StartCombo(int[] keys, bool held)
+        {
+            dt.Active = keys;
+            dt.ActiveHeld = held;
+            dt.Pressed = 0;
+            dt.Releasing = false;
+            Go(TapState.Combo);
+        }
+
         switch (dt.State)
         {
             case TapState.Idle:
@@ -698,10 +1204,28 @@ public class TouchKeys : MonoBehaviour
 
             case TapState.FirstDown:
                 if (released)
-                    Go(TapState.WaitSecond);
+                {
+                    if (dt.Keys != null)
+                        Go(TapState.WaitSecond);
+                    else
+                    {
+                        // No double tap to wait for: a short press of the button's own key now
+                        LogTap(m, "tap");
+                        Set(m, true);
+                        Go(TapState.TapOut);
+                    }
+                }
                 else if (now - dt.Since >= DoubleTapWindow)
                 {
+                    if (dt.HoldKeys != null)
+                    {
+                        // Long press with its own action: tap those keys once
+                        Plugin.Logger.LogInfo($"[Touch] Hold on {m.Button}");
+                        StartCombo(dt.HoldKeys, false);
+                        goto case TapState.Combo;
+                    }
                     // Long press: hold the button's own key for as long as the button is held
+                    LogTap(m, "hold");
                     Set(m, true);
                     Go(TapState.Holding);
                 }
@@ -719,12 +1243,14 @@ public class TouchKeys : MonoBehaviour
                 if (pressed)
                 {
                     Plugin.Logger.LogInfo($"[Touch] Double tap on {m.Button}");
-                    Go(TapState.Combo);
+                    Haptics.Pulse(HandOf(m.Button), 0.4f, 0.04f);
+                    StartCombo(dt.Keys, dt.KeysHeld);
                     goto case TapState.Combo;
                 }
                 if (now - dt.Since >= DoubleTapWindow)
                 {
                     // Just one tap: a short press of the button's own key
+                    LogTap(m, "tap");
                     Set(m, true);
                     Go(TapState.TapOut);
                 }
@@ -739,18 +1265,23 @@ public class TouchKeys : MonoBehaviour
                 break;
 
             case TapState.Combo:
-                if (!dt.Releasing && dt.Pressed < dt.Keys.Length)
+                if (!dt.Releasing && dt.Pressed < dt.Active.Length)
                 {
                     // Press the next key (one per frame), even if the button was already let go
-                    LogCombo(dt.Keys[dt.Pressed], true);
-                    Press(dt.Keys[dt.Pressed++], true);
+                    LogCombo(dt.Active[dt.Pressed], true);
+                    Press(dt.Active[dt.Pressed++], true);
+                }
+                else if (!dt.Releasing && dt.ActiveHeld && (down || now - dt.Since < ComboMinHold))
+                {
+                    // A held combination: keep the keys down while the button is held (and at least ComboMinHold)
                 }
                 else
                 {
-                    // Let go straight away (whether or not the button is still held), in reverse order, one per frame
+                    // Let go (a tap: straight away, whether or not the button is still held), in reverse order, one
+                    // per frame
                     dt.Releasing = true;
-                    LogCombo(dt.Keys[dt.Pressed - 1], false);
-                    Press(dt.Keys[--dt.Pressed], false);
+                    LogCombo(dt.Active[dt.Pressed - 1], false);
+                    Press(dt.Active[--dt.Pressed], false);
                     if (dt.Pressed == 0)
                     {
                         dt.Releasing = false;
@@ -761,9 +1292,18 @@ public class TouchKeys : MonoBehaviour
         }
     }
 
+    // 2026-11-04: left stick right (grenades) seemed to do nothing and single taps left no trace: log them
+    private static int s_tapLogs;
+
+    private static void LogTap(Mapping m, string what)
+    {
+        if (Plugin.Diagnostics.Value && m.KeyCode != 0 && s_tapLogs++ < 80)
+            Plugin.Logger.LogInfo($"[Touch] {m.Button} {what}: {m.Action} ({(KeyCode)m.KeyCode})");
+    }
+
     private static void LogCombo(int key, bool down)
     {
-        if (s_comboLogs++ < 40)
+        if (Plugin.Diagnostics.Value && s_comboLogs++ < 40)
             Plugin.Logger.LogInfo($"[Touch] combo key {(KeyCode)key} {(down ? "down" : "up")} at frame {Time.frameCount}");
     }
 
@@ -772,16 +1312,33 @@ public class TouchKeys : MonoBehaviour
         // Only used to let go of everything at once (VR stopped, settings changed)
         if (down)
             return;
-        while (dt.Pressed > 0)
-            Press(dt.Keys[--dt.Pressed], false);
+        while (dt.Active != null && dt.Pressed > 0)
+            Press(dt.Active[--dt.Pressed], false);
+        dt.Pressed = 0;
         dt.Releasing = false;
         dt.State = TapState.Idle;
     }
 
-    /// <summary>Parses Controls.TouchDoubleTap ("X=LeftShift+T, ...", Unity KeyCode names) when it changes.</summary>
+    private static int[] ParseKeys(string text)
+    {
+        var keys = new List<int>();
+        foreach (var name in text.Split('+'))
+            if (Enum.TryParse<KeyCode>(name.Trim(), true, out var code) && code != KeyCode.None)
+                keys.Add((int)code);
+        return keys.Count == 0 ? null : keys.ToArray();
+    }
+
+    private static string Describe(int[] keys) => string.Join("+", Array.ConvertAll(keys, k => ((KeyCode)k).ToString()));
+
+    /// <summary>
+    /// Parses Controls.TouchDoubleTap ("X=LeftShift+T, B=Hold:Space", Unity KeyCode names) and Controls.TouchHold
+    /// ("B=Space") when they change.
+    /// </summary>
     private void ReadDoubleTaps()
     {
-        var config = Plugin.TouchDoubleTap.Value ?? "";
+        var doubles = Plugin.TouchDoubleTap.Value ?? "";
+        var holds = Plugin.TouchHold.Value ?? "";
+        var config = doubles + "|" + holds;
         if (config == _doubleTapConfig)
             return;
         _doubleTapConfig = config;
@@ -789,28 +1346,53 @@ public class TouchKeys : MonoBehaviour
             SetCombo(dt, false);
         _doubleTaps.Clear();
 
+        DoubleTap Entry(string button)
+        {
+            if (!_doubleTaps.TryGetValue(button, out var e))
+                _doubleTaps[button] = e = new DoubleTap();
+            return e;
+        }
+
         var described = new List<string>();
-        foreach (var part in config.Split(','))
+        foreach (var part in doubles.Split(','))
         {
             var kv = part.Split('=');
-            if (kv.Length != 2 || !Buttons.ContainsKey(kv[0].Trim()))
+            if (kv.Length != 2 || !IsButton(kv[0].Trim()))
                 continue;
-            var keys = new List<int>();
-            foreach (var name in kv[1].Split('+'))
-                if (Enum.TryParse<KeyCode>(name.Trim(), true, out var code) && code != KeyCode.None)
-                    keys.Add((int)code);
-            if (keys.Count == 0)
+            var value = kv[1].Trim();
+            var held = value.StartsWith("Hold:", StringComparison.OrdinalIgnoreCase);
+            var keys = ParseKeys(held ? value.Substring(5) : value);
+            if (keys == null)
                 continue;
-            _doubleTaps[kv[0].Trim()] = new DoubleTap { Keys = keys.ToArray() };
-            described.Add($"{kv[0].Trim()} x2 = {string.Join("+", keys.ConvertAll(k => ((KeyCode)k).ToString()))}");
+            var e = Entry(kv[0].Trim());
+            e.Keys = keys;
+            e.KeysHeld = held;
+            described.Add($"{kv[0].Trim()} x2 = {(held ? "hold " : "")}{Describe(keys)}");
+        }
+        foreach (var part in holds.Split(','))
+        {
+            var kv = part.Split('=');
+            if (kv.Length != 2 || !IsButton(kv[0].Trim()))
+                continue;
+            var keys = ParseKeys(kv[1]);
+            if (keys == null)
+                continue;
+            Entry(kv[0].Trim()).HoldKeys = keys;
+            described.Add($"{kv[0].Trim()} held = {Describe(keys)}");
         }
         if (described.Count > 0)
-            Plugin.Logger.LogInfo("[Touch] Double taps: " + string.Join(", ", described));
+            Plugin.Logger.LogInfo("[Touch] Double taps / holds: " + string.Join(", ", described));
     }
 
     private void ReleaseAll()
     {
         UpdateMenuClick(false);
+        StockOn = false;
+        if (_headLean != 0)
+        {
+            Press(_headLean < 0 ? (int)KeyCode.Q : (int)KeyCode.E, false);
+            _headLean = 0;
+        }
         foreach (var m in _map)
             Set(m, false);
         foreach (var w in _walk)

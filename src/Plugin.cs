@@ -1,4 +1,4 @@
-﻿using BepInEx;
+using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Logging;
 using BepInEx.Unity.IL2CPP;
@@ -10,7 +10,7 @@ public class Plugin : BasePlugin
 {
     public const string Guid = "com.operatorvr.mod";
     public const string Name = "OperatorVR";
-    public const string Version = "1.0.0";
+    public const string Version = "1.1.0";
 
     internal static ManualLogSource Logger;
     internal static ConfigEntry<OpenXRNative.RenderMode> StereoRenderMode;
@@ -38,7 +38,8 @@ public class Plugin : BasePlugin
     internal static ConfigEntry<bool> PlainBackdrops;
     internal static ConfigEntry<float> BenchStepBack;
     internal static ConfigEntry<float> LeanHoldTime;
-    internal static ConfigEntry<float> BenchWeaponForward;
+    internal static ConfigEntry<float> BenchWeaponForward, BenchSpinSpeed, BenchDragGain, LaserDragSpeed;
+    internal static ConfigEntry<string> MenuClickButton;
     internal static ConfigEntry<bool> GazeDot;
     internal static ConfigEntry<bool> Diagnostics;
     internal static ConfigEntry<bool> PadRangeSwitch;
@@ -63,7 +64,8 @@ public class Plugin : BasePlugin
     internal static ConfigEntry<bool> TouchAsGamepad;
     internal static ConfigEntry<bool> TouchControls;
     internal static ConfigEntry<string> TouchMap;
-    internal static ConfigEntry<string> TouchDoubleTap;
+    internal static ConfigEntry<string> TouchDoubleTap, TouchHold;
+    internal static ConfigEntry<string> TouchDpadButton, TouchLeftDpadButton;
     internal static ConfigEntry<string> VoiceMic;
     internal static ConfigEntry<float> TouchTurnSpeed;
     internal static ConfigEntry<float> TouchLookUpDown;
@@ -74,6 +76,11 @@ public class Plugin : BasePlugin
     internal static ConfigEntry<bool> HoldToInteract;
     internal static ConfigEntry<float> TouchTurnDegrees;
     internal static ConfigEntry<float> HandAimPitchOffset;
+    internal static ConfigEntry<bool> VirtualStock;
+    internal static ConfigEntry<string> VirtualStockButton;
+    internal static ConfigEntry<bool> Haptics, HapticsBothHands, HeadLean;
+    internal static ConfigEntry<float> HapticsShot, HeadLeanAngle, LeanSpeed, MagLabelHeight;
+    internal static ConfigEntry<bool> VirtualStockToggle;
     internal static ConfigEntry<OpenXRNative.DepthSubmissionMode> DepthSubmission;
     internal static ConfigEntry<bool> PositionalTracking;
     internal static ConfigEntry<bool> UseGamePitch;
@@ -225,16 +232,38 @@ public class Plugin : BasePlugin
             "right stick turns, buttons as in TouchMap. Off = play with a gamepad (e.g. a PS5 pad through Steam Input); " +
             "the hand aim, the menu laser and the free left hand are then off too.");
         TouchMap = Config.Bind("Controls", "TouchMap",
-            "RightTrigger=Shoot, LeftTrigger=Aim, A=Interact, B=Crouch, X=Reload, Y=Firemode, RightGrip=Vault, " +
-            "LeftStickClick=Sprint, RightStickClick=FlashlightsToggle, Menu=Escape",
+            "RightTrigger=Shoot, LeftTrigger=Aim, A=FlashlightsToggle,B=Crouch, X=Reload, Y=Firemode, LeftGrip=Sprint, LeftStickClick=Prone, " +
+            "RightStickClick=Interact, DpadUp=SwitchBetweenSights, DpadLeft=LasersToggle, " +
+            "DpadRight=SwitchGrenades, DpadDown=Recenter, LeftDpadUp=ToggleNVGs, LeftDpadLeft=NextWeapon, " +
+            "LeftDpadDown=OpenATAK, LeftDpadRight=SwitchGrenades, " +
+            "Menu=Escape",
             "Touch button = game action. Buttons: A, B, X, Y, RightTrigger, LeftTrigger, RightGrip, LeftGrip, " +
-            "RightStickClick, LeftStickClick, Menu. Actions: any of the game's (WalkForward, Sprint, Crouch, Prone, Kick, " +
+            "RightStickClick, LeftStickClick, LeftThumbrest, RightThumbrest, Menu, the virtual D-pad DpadUp, DpadDown, " +
+            "DpadLeft, DpadRight (right stick while TouchDpadButton is held; DpadUp = sight switch: flips a magnifier " +
+            "up, the next push flips it down) and the left one LeftDpadUp/Down/Left/Right (left stick while " +
+            "TouchLeftDpadButton is held). Actions: any of the game's (WalkForward, Sprint, Crouch, Prone, Kick, " +
             "HealthMenu, Interact, Aim, Shoot, Reload, Firemode, Vault, LeanLeft, LeanRight, FreeLean, SwitchPrimary, " +
-            "SwitchSecondary, SwitchGrenades, ToggleNVGs, OpenATAK, CheckMag, Inspect, ...) or Escape.");
+            "SwitchSecondary, SwitchGrenades, ToggleNVGs, OpenATAK, CheckMag, Inspect, ...), Escape, Recenter (the " +
+            "view, like F10), NextWeapon (the next weapon you carry, as NextWeaponKey) or Run (click to start " +
+            "running, click again to walk; also stops when you stop moving forward, as RunKey) or ChamberRound (unjam / " +
+            "chamber a round, Left Shift + T in order, as ManualReloadKey).");
         // Y double tap = the game's menu: the left menu button doesn't reach the game under SteamVR/Virtual Desktop
-        TouchDoubleTap = Config.Bind("Controls", "TouchDoubleTap", "X=LeftShift+T, Y=Escape",
+        TouchDoubleTap = Config.Bind("Controls", "TouchDoubleTap",
+            "X=LeftShift+T, Y=Hold:Tab, LeftDpadRight=LeftShift+T, B=Hold:Space",
             "Touch button = keys pressed together when you double-tap it (instead of its normal action on the second tap). " +
-            "Keys use Unity names joined with +, e.g. LeftShift+T, LeftControl+R, Mouse2. Separate entries with commas.");
+            "Keys use Unity names joined with +, e.g. LeftShift+T, LeftControl+R, Mouse2. Hold: in front (B=Hold:Space, " +
+            "vault) keeps them down while the button stays held (at least 0.6 s). Separate entries with commas.");
+        TouchHold = Config.Bind("Controls", "TouchHold", "B=Space",
+            "Touch button = keys tapped when you hold it down (instead of holding its own action), e.g. B=Space: tap B " +
+            "crouches, hold B kicks. Keys as in TouchDoubleTap. Separate entries with commas.");
+        TouchDpadButton = Config.Bind("Controls", "TouchDpadButton", "LeftThumbrest",
+            "Hold this Touch button to make the right stick a virtual D-pad (DpadUp/Down/Left/Right in TouchMap); the " +
+            "right stick doesn't turn you while it's held. LeftThumbrest = left thumb resting on its thumbrest; " +
+            "LeftGrip also works. Don't also map it in TouchMap. Empty = no virtual D-pad.");
+        TouchLeftDpadButton = Config.Bind("Controls", "TouchLeftDpadButton", "RightThumbrest",
+            "Hold this Touch button to make the left stick a second virtual D-pad (LeftDpadUp/Down/Left/Right in " +
+            "TouchMap); you don't walk while it's held. RightThumbrest = right thumb resting on its thumbrest. " +
+            "Empty = no left virtual D-pad.");
         TouchTurnSpeed = Config.Bind("Controls", "TouchTurnSpeed", 900f,
             "How fast the right stick turns you (mouse pixels per second at full tilt).");
         TouchLookUpDown = Config.Bind("Controls", "TouchLookUpDown", 0f,
@@ -260,6 +289,31 @@ public class Plugin : BasePlugin
             "wobbles, too low = it lags. Negative if the aim moves the wrong way.");
         HandAimPitchOffset = Config.Bind("Controls", "HandAimPitchOffset", 0f,
             "Degrees added to the hand's up/down angle, if the gun ends up aiming a bit higher or lower than you point.");
+        VirtualStock = Config.Bind("Controls", "VirtualStock", true,
+            "With the Touch controllers: while VirtualStockButton is held, the right controller is a stock locked in " +
+            "place against your head, and moving the left controller left/right/up/down aims the gun (along the line " +
+            "from the stock through the left hand). Let go to aim with the right controller again.");
+        VirtualStockButton = Config.Bind("Controls", "VirtualStockButton", "RightGrip",
+            "The Touch button held for the virtual stock (A, B, X, Y, RightGrip, LeftGrip, ...). Don't also map it in TouchMap.");
+        Haptics = Config.Bind("Controls", "Haptics", true,
+            "With the Touch controllers: the controllers vibrate when you fire, and give short buzzes as feedback (the " +
+            "virtual stock on or off, a double tap recognised, Interact sent).");
+        HapticsShot = Config.Bind("Controls", "HapticsShot", 0.7f,
+            "How strong the kick in the right controller is for each shot (0 = none, 1 = strongest).");
+        HapticsBothHands = Config.Bind("Controls", "HapticsBothHands", true,
+            "The left controller feels each shot too (a little lighter than the right).");
+        HeadLean = Config.Bind("Controls", "HeadLean", true,
+            "With the Touch controllers: tilt your head to the side past HeadLeanAngle to lean that way (the game's Lean " +
+            "Left / Lean Right); straighten your head to stand up straight again.");
+        MagLabelHeight = Config.Bind("Controls", "MagLabelHeight", 0.04f,
+            "When checking a magazine, how far above the magazine (metres) the round count and turning magazine show.");
+        HeadLeanAngle = Config.Bind("Controls", "HeadLeanAngle", 8f,
+            "How far (degrees) you tilt your head sideways to lean. You straighten up below about half of this.");
+        LeanSpeed = Config.Bind("Controls", "LeanSpeed", 2.5f,
+            "How fast you lean with a weapon in hand, times the game's own speed (1 = the game's; 0.25 to 5).");
+        VirtualStockToggle = Config.Bind("Controls", "VirtualStockToggle", true,
+            "On: press VirtualStockButton once to turn the virtual stock on, press it again to turn it off. Off: the " +
+            "stock is on only while the button is held.");
         FreeLeftHand = Config.Bind("Controls", "FreeLeftHand", true,
             "In VR the character's left hand follows the left controller when you take it off the gun, and grips the gun " +
             "again when you bring it back to the front of the gun. F3 switches it off/on while playing.");
@@ -401,8 +455,21 @@ public class Plugin : BasePlugin
             "With a gamepad, at the shoot house switch: hold Interact (F, R3 on the PS5 layout) with the aim level to " +
             "send the target away, or aimed at the floor to bring it back.");
         GazeDot = Config.Bind("Menus", "GazeDot", true,
-            "With a gamepad in VR, show a small dot where you look: white normally, green when there's something to " +
-            "use there (press Interact).");
+            "In VR, show a small dot where the game aims (the right stick with a gamepad, your right hand with the Touch " +
+            "controllers) near things you can use: white normally, green when there's something to use there (press Interact).");
+        BenchSpinSpeed = Config.Bind("Menus", "BenchSpinSpeed", 150f,
+            "With the Touch controllers, on the weapon bench the right stick's left/right turns the weapon round, this " +
+            "many degrees per second at full tilt (negative turns it the other way).");
+        BenchDragGain = Config.Bind("Menus", "BenchDragGain", 3f,
+            "With the Touch controllers, on the weapon bench: hold the click with the laser on the weapon (not the page) " +
+            "and swing the controller left/right to turn the weapon, this many degrees per degree of swing (negative " +
+            "turns it the other way).");
+        LaserDragSpeed = Config.Bind("Menus", "LaserDragSpeed", 2.5f,
+            "With the Touch controllers, how fast things you drag with the laser move (e.g. medication on the health " +
+            "screen), compared with the laser itself. 1 = the mouse movement the laser makes; higher = faster.");
+        MenuClickButton = Config.Bind("Menus", "MenuClickButton", "RightTrigger",
+            "With the Touch controllers, the button that clicks in menus, on laptops and on the weapon bench (where the " +
+            "laser points). RightTrigger, A, ...");
         BenchWeaponForward = Config.Bind("Menus", "BenchWeaponForward", 0.3f,
             "In VR, while the weapon bench page is open, the weapon is moved this many metres out from the wall towards " +
             "you so it can be turned without going through the wall (0 = where the game puts it; up to 0.6).");
@@ -502,6 +569,9 @@ public class Plugin : BasePlugin
         if (Diagnostics.Value)
             AddComponent<TouchGamepad>();
         AddComponent<TouchKeys>();
+
+        // Controller vibration: each shot, and short buzzes as feedback
+        AddComponent<Haptics>();
 
         // With a gamepad, the game's up/down aim follows the head
         AddComponent<HeadAim>();

@@ -81,7 +81,7 @@ public class VRPointer : MonoBehaviour
 
             FrameTarget(_target);
             PlaceCursor(_target);
-            LogBenchDrag(_target);
+            if (Plugin.Diagnostics.Value) LogBenchDrag(_target);
         }
         catch (Exception e)
         {
@@ -588,6 +588,13 @@ public class VRPointer : MonoBehaviour
     /// <summary>The canvas the mouse currently drives (floating menu or laptop screen), or null.</summary>
     internal static Canvas Target => s_instance == null ? null : s_instance._target;
 
+    /// <summary>Whether the arrow is over a visible part of the menu it drives now (false over empty space).</summary>
+    internal static bool ArrowOverMenu()
+    {
+        var t = Target;
+        return t != null && TryGetMouseViewport(out var nx, out var ny) && GraphicUnderMouse(t, nx, ny);
+    }
+
     /// <summary>Puts the Windows cursor at a point given as 0..1 across the game window (bottom-left origin), the reverse of TryGetMouseViewport.</summary>
     internal static void MoveMouseToViewport(float nx, float ny)
     {
@@ -599,9 +606,33 @@ public class VRPointer : MonoBehaviour
             X = Mathf.RoundToInt(Mathf.Clamp01(nx) * (r.Right - r.Left)),
             Y = Mathf.RoundToInt((1f - Mathf.Clamp01(ny)) * (r.Bottom - r.Top)),
         };
-        if (ClientToScreen(hwnd, ref p))
-            SetCursorPos(p.X, p.Y);
+        if (!ClientToScreen(hwnd, ref p))
+            return;
+        // While the click is held (dragging), move there as a real mouse movement first: placing the cursor alone
+        // gives the game no mouse movement, and its drags read that (the bench's weapon turn, and the health screen's
+        // medication couldn't be dragged onto the body, 2026-11-04). Then place it exactly (pointer speed settings
+        // can scale the movement)
+        // (Not on the weapon bench: the controller swing turns the weapon there, and both would turn it twice)
+        if (!WeaponBench.Open && (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0 && GetCursorPos(out var now))
+        {
+            // Scaled up (Menus.LaserDragSpeed): at 1 the medication trailed behind the laser ("a bit slow", 2026-11-04)
+            var gain = Mathf.Max(0.1f, Plugin.LaserDragSpeed.Value);
+            var dx = Mathf.RoundToInt((p.X - now.X) * gain);
+            var dy = Mathf.RoundToInt((p.Y - now.Y) * gain);
+            if (dx != 0 || dy != 0)
+            {
+                TouchKeys.MoveMouse(dx, dy);
+                if (!s_dragMoveLogged)
+                {
+                    s_dragMoveLogged = true;
+                    Plugin.Logger.LogInfo("[Pointer] Dragging with the laser: sending real mouse movement while the click is held");
+                }
+            }
+        }
+        SetCursorPos(p.X, p.Y);
     }
+
+    private static bool s_dragMoveLogged;
 
     internal static void CenterMouse()
     {

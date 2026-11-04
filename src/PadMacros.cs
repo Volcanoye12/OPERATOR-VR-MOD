@@ -163,6 +163,22 @@ public class PadMacros : MonoBehaviour
         Plugin.Logger.LogInfo($"[Pad] Next weapon: {current} -> {next.slot} (key {next.key}; carrying {carried.Count})");
     }
 
+    /// <summary>The weapon the local player is holding (null if not found).</summary>
+    private GameObject HeldWeapon()
+    {
+        if (_me == null)
+            foreach (var o in UnityEngine.Object.FindObjectsByType(Il2CppInterop.Runtime.Il2CppType.Of<PlayerNetworking>(), FindObjectsSortMode.None))
+            {
+                var p = o.TryCast<PlayerNetworking>();
+                if (p != null && p.gameObject.name.Contains("MyPlayer"))
+                {
+                    _me = p;
+                    break;
+                }
+            }
+        try { return _me != null ? _me.activeWeapon : null; } catch { return null; }
+    }
+
     private static WeaponV3 WeaponIn(PlayerNetworking p, PlayerNetworking.WeaponSlot slot) => slot switch
     {
         PlayerNetworking.WeaponSlot.Primary => p.primaryWeapon,
@@ -329,6 +345,46 @@ public class PadMacros : MonoBehaviour
     private bool _capsWas;
     private readonly System.Collections.Generic.HashSet<string> _flipLogged = new();
 
+    // Spoken "magnifier up" / "flip magnifier" / "magnifier down" (VoiceCommands, 2026-11-04): flips the magnifier on
+    // the gun in hand that way (nothing if it already is), and says so if there's a callout recorded for it
+    private void VoiceMagnifier()
+    {
+        var cmd = VoiceBridge.TakeMagnifierCommand();
+        if (cmd == 0)
+            return;
+        var up = cmd == 1;
+        var f = HeldMagnifier();
+        if (f == null)
+        {
+            Plugin.Logger.LogInfo("[VoiceCmd] No flip-up magnifier on the gun in hand");
+            return;
+        }
+        if (f.isFlipped != up)
+            SetFlipped(f, up);
+        Plugin.Logger.LogInfo($"[VoiceCmd] Magnifier '{f.name}' {(up ? "up" : "down")}");
+        VoiceBridge.Magnifier(up);
+    }
+
+    /// <summary>The flip-up magnifier on the gun in hand, or null.</summary>
+    [Il2CppInterop.Runtime.Attributes.HideFromIl2Cpp]
+    private FlipSights HeldMagnifier()
+    {
+        var all = UnityEngine.Object.FindObjectsByType(Il2CppInterop.Runtime.Il2CppType.Of<FlipSights>(), FindObjectsSortMode.None);
+        var held = HeldWeapon();
+        FlipSights onHeld = null;
+        foreach (var o in all)
+        {
+            var f = o.TryCast<FlipSights>();
+            if (f == null || !f.transform.root.name.Contains("MyPlayer"))
+                continue;
+            if (f.isActiveAndEnabled && f.weapon != null && f.weapon.l_isEquiped)
+                return f;
+            if (onHeld == null && held != null && f.transform.IsChildOf(held.transform))
+                onHeld = f;
+        }
+        return onHeld;
+    }
+
     private void UpdateFlip(bool focused)
     {
         // (Our own CapsLock press, choosing the scope, isn't a D-pad press)
@@ -338,7 +394,8 @@ public class PadMacros : MonoBehaviour
         if (!pressed || !Plugin.FlipWithSightSwitch.Value)
             return;
 
-        foreach (var o in UnityEngine.Object.FindObjectsByType(Il2CppInterop.Runtime.Il2CppType.Of<FlipSights>(), FindObjectsSortMode.None))
+        var all = UnityEngine.Object.FindObjectsByType(Il2CppInterop.Runtime.Il2CppType.Of<FlipSights>(), FindObjectsSortMode.None);
+        foreach (var o in all)
         {
             var f = o.TryCast<FlipSights>();
             if (f == null || !f.isActiveAndEnabled || !f.transform.root.name.Contains("MyPlayer"))
@@ -348,6 +405,26 @@ public class PadMacros : MonoBehaviour
                 continue;                                   // the same check the game makes: only the gun in hand
             if (_flipLogged.Add(f.name))
                 Plugin.Logger.LogInfo($"[Pad] Magnifier '{f.name}' on '{w.name}' (flipped now: {f.isFlipped})");
+            SetFlipped(f, !f.isFlipped);
+            return;
+        }
+        // 2026-11-04: the HK416D's G33 magnifier ('WilcoxMount_Topbase') was there but D-pad up said "no flip-up
+        // magnifier": the strict check above missed it. Fall back to a magnifier on the gun the player is holding
+        // (under its active weapon), and log what each one looked like
+        var held = HeldWeapon();
+        foreach (var o in all)
+        {
+            var f = o.TryCast<FlipSights>();
+            if (f == null || !f.transform.root.name.Contains("MyPlayer"))
+                continue;
+            var onHeld = held != null && f.transform.IsChildOf(held.transform);
+            if (_flipLogged.Add("diag " + f.name))
+                Plugin.Logger.LogInfo($"[Pad] Magnifier '{f.name}': active {f.isActiveAndEnabled}, weapon " +
+                                      $"'{(f.weapon != null ? f.weapon.name : "none")}' equipped {(f.weapon != null && f.weapon.l_isEquiped)}, " +
+                                      $"on the gun in hand {onHeld}");
+            if (!onHeld)
+                continue;
+            Plugin.Logger.LogInfo($"[Pad] Flipping magnifier '{f.name}' (found on the gun in hand)");
             SetFlipped(f, !f.isFlipped);
             return;
         }
@@ -555,11 +632,12 @@ public class PadMacros : MonoBehaviour
     {
         using var __t = ModTime.Measure("PadMacros");
         LogBindsOnce();
-        try { LogLaserButton(); } catch { }
+        if (Plugin.Diagnostics.Value) try { LogLaserButton(); } catch { }
         // While the mission screen has the pad its buttons are menu keys: Cross there tapped Space (kick) as well as
         // selecting, and the user's view lurched left on each pick (2026-11-03)
         var focused = TouchKeys.GameHasFocus() && !MissionScreen.HasControl;
         try { UpdateFlip(focused); } catch (Exception e) { Plugin.Logger.LogError($"[Pad] flip: {e.GetType().Name}: {e.Message}"); }
+        try { VoiceMagnifier(); } catch (Exception e) { Plugin.Logger.LogError($"[VoiceCmd] magnifier: {e.GetType().Name}: {e.Message}"); }
         try { UpdateRun(focused); } catch { }
         try { UpdateCross(focused); } catch (Exception e) { Plugin.Logger.LogError($"[Pad] cross: {e.GetType().Name}: {e.Message}"); }
         try { if (OpenXRBootstrap.IsRunning && Plugin.FlipWithSightSwitch.Value) KeepScopeSelected(); }

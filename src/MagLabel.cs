@@ -97,8 +97,9 @@ public class MagLabel : MonoBehaviour
         var count = $"{mag.ammoAmount}\n<size=60%>/ {mag.ammoAmountMax}{(weapon.roundInChamber ? "\n+ 1" : "")}</size>";
         if (_text.text != count)
             _text.text = count;
-        // Just above the magazine, facing the eye
-        var pos = mag.transform.position + Vector3.up * 0.10f;
+        // Just above the magazine, facing the eye. 10 cm up floated high above the gun (2026-11-04): now
+        // Controls.MagLabelHeight (4 cm by default)
+        var pos = mag.transform.position + Vector3.up * Mathf.Clamp(Plugin.MagLabelHeight.Value, -0.1f, 0.3f);
         var t = _go.transform;
         t.position = pos;
         t.rotation = Quaternion.LookRotation(pos - cam.transform.position, Vector3.up);

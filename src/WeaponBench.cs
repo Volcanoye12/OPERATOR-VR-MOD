@@ -129,8 +129,36 @@ public class WeaponBench : MonoBehaviour
     private readonly List<Renderer> _weaponRenderers = new();
     private int _spinLogs;
 
+    // With the Touch controllers the right stick doesn't reach the bench's turner (a menu takes the mouse, so the
+    // stick sends no mouse movement), so the weapon couldn't be turned as with the PS5 pad (2026-11-04). TouchKeys
+    // adds the right stick's left/right here (degrees), and it's added to the turner's own turn
+    internal static bool Open { get; private set; }
+    internal static float SpinInput;
+    private bool _spinLogged;
+
     private void LateUpdate()
     {
+        Open = OpenXRBootstrap.IsRunning && PageCanvas() != null;
+        try
+        {
+            if (Open && _turner == null && Mathf.Abs(SpinInput) > 0f && !_spinLogged)
+            {
+                _spinLogged = true;
+                Plugin.Logger.LogWarning("[Bench] Right stick turning the weapon, but the bench's turner isn't found");
+            }
+            if (Open && _turner != null && Mathf.Abs(SpinInput) > 0f)
+            {
+                _turner._yRotation += SpinInput;
+                if (!_spinLogged)
+                {
+                    _spinLogged = true;
+                    Plugin.Logger.LogInfo("[Bench] Turning the weapon with the Touch right stick");
+                }
+            }
+        }
+        catch (Exception e) { Plugin.Logger.LogError($"[Bench] stick turn: {e.GetType().Name}: {e.Message}"); }
+        SpinInput = 0f;
+
         try { FixLeftWeapons(); }
         catch (Exception e) { Plugin.Logger.LogError($"[Bench] weapon size back: {e.GetType().Name}: {e.Message}"); }
         try

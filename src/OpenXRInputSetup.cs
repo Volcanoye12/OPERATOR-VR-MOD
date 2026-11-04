@@ -23,7 +23,7 @@ internal static class OpenXRInputSetup
     private const uint RightHand = 4 | 32 | 64 | 512;
 
     // OpenXRInteractionFeature.ActionType
-    private const uint Binary = 0, Axis1D = 1, Axis2D = 2, Pose = 3;
+    private const uint Binary = 0, Axis1D = 1, Axis2D = 2, Pose = 3, Vibrate = 4;
 
     [StructLayout(LayoutKind.Explicit)]
     private struct SerializedGuid
@@ -71,11 +71,16 @@ internal static class OpenXRInputSetup
         ("grippressed", Binary, "GripButton", "/input/squeeze/value", "/input/squeeze/value"),
         ("thumbstick", Axis2D, "Primary2DAxis", "/input/thumbstick", "/input/thumbstick"),
         ("thumbstickclicked", Binary, "Primary2DAxisClick", "/input/thumbstick/click", "/input/thumbstick/click"),
+        // Thumb resting on the thumbrest (touch only; the left one switches on the virtual D-pad)
+        ("thumbresttouched", Binary, "ThumbrestTouch", "/input/thumbrest/touch", "/input/thumbrest/touch"),
         // X / A and Y / B
         ("primarybutton", Binary, "PrimaryButton", "/input/x/click", "/input/a/click"),
         ("secondarybutton", Binary, "SecondaryButton", "/input/y/click", "/input/b/click"),
         // Only the left controller has a menu button the app may use (the right one is the system button)
         ("menu", Binary, "MenuButton", "/input/menu/click", null),
+        // Vibration (2026-11-04): without an output action the controllers reported no haptics, and every vibration
+        // was refused ("didn't take a vibration"). The package's Oculus Touch profile binds it the same way
+        ("haptic", Vibrate, "Haptic", "/output/haptic", "/output/haptic"),
     };
 
     /// <summary>Returns true if the action sets were attached; logs what failed otherwise.</summary>

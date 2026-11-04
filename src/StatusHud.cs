@@ -28,12 +28,14 @@ public class StatusHud : MonoBehaviour
     private const float ReferenceDistance = 0.5f;
     private static readonly Vector3 StatusAt = new(-0.15f, -0.16f, 0.5f);
     private static readonly Vector3 CompassAt = new(0f, 0.17f, 0.5f);
+    // The virtual stock notice: lower right, level with the status display (the user's choice, 2026-11-04)
+    private static readonly Vector3 StockAt = new(0.15f, -0.16f, 0.5f);
     // Canvas units per metre, and the compass's width (metres) and field (degrees each side)
     private const float UnitsPerMetre = 5000f, CompassWidth = 0.24f, CompassSpan = 60f;
 
     private PlayerNetworking _me;
     private float _nextFind, _nextText;
-    private GameObject _root, _status, _compass;
+    private GameObject _root, _status, _compass, _stock;
     private TextMeshProUGUI _statusText;
     private readonly List<(TextMeshProUGUI text, float bearing)> _marks = new();
     private TMP_FontAsset _font;
@@ -73,6 +75,9 @@ public class StatusHud : MonoBehaviour
             var look = Mathf.Clamp(Plugin.HudSize.Value, 0.3f, 3f);
             Place(_status, StatusAt, k, look);
             Place(_compass, CompassAt, k, look);
+            Place(_stock, StockAt, k, look);
+            if (_stock.activeSelf != TouchKeys.StockOn)
+                _stock.SetActive(TouchKeys.StockOn);
             // Quicker while talking starts or stops, so the indicator follows the button
             if (Plugin.StatusHud.Value && (Time.unscaledTime >= _nextText || AimLean.Talking != _talkShown))
             {
@@ -274,6 +279,12 @@ public class StatusHud : MonoBehaviour
         _status = NewCanvas("Status", StatusAt, new Vector2(1000f, 200f));
         // 1400 wide, its left edge where the first version's 1000 was (-500): room for the weapon picture's margin
         _statusText = NewText(_status.transform, "Text", new Vector2(200f, 0f), new Vector2(1400f, 200f), 60f, TextAlignmentOptions.BottomLeft);
+
+        _stock = NewCanvas("Stock", StockAt, new Vector2(1000f, 200f));
+        var stockText = NewText(_stock.transform, "Text", new Vector2(-200f, 0f), new Vector2(1400f, 200f), 60f, TextAlignmentOptions.BottomRight);
+        stockText.text = "GUNSTOCK ACTIVATED";
+        stockText.color = new Color(0.95f, 0.64f, 0.23f);
+        _stock.SetActive(false);
 
         _compass = NewCanvas("Compass", CompassAt, new Vector2(CompassWidth * UnitsPerMetre + 200f, 160f));
         var names = new Dictionary<int, string> { [0] = "N", [45] = "NE", [90] = "E", [135] = "SE", [180] = "S", [225] = "SW", [270] = "W", [315] = "NW" };

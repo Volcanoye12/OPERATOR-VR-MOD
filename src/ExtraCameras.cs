@@ -78,6 +78,7 @@ public class ExtraCameras : MonoBehaviour
 
     // Scope cameras are plain cameras in VR (eye None), so HDRP doesn't treat them as headset views
     private readonly Dictionary<IntPtr, (Camera cam, StereoTargetEyeMask eye)> _scopes = new();
+    private readonly Dictionary<IntPtr, UnityEngine.Rendering.HighDefinition.HDAdditionalCameraData> _scopeXr = new();
     private static ExtraCameras s_instance;
 
     private void Start() => s_instance = this;
@@ -138,11 +139,25 @@ public class ExtraCameras : MonoBehaviour
             foreach (var o in UnityEngine.Object.FindObjectsByType(Il2CppType.Of<Camera>(), FindObjectsSortMode.None))
             {
                 var c = o.TryCast<Camera>();
-                if (c != null && IsScope(c) && c.stereoTargetEye != StereoTargetEyeMask.None && !_scopes.ContainsKey(c.Pointer))
+                if (c != null && IsScope(c) && !_scopes.ContainsKey(c.Pointer))
                 {
                     _scopes[c.Pointer] = (c, c.stereoTargetEye);
                     c.stereoTargetEye = StereoTargetEyeMask.None;
-                    Plugin.Logger.LogInfo($"[Cameras] Scope camera kept on (as a plain camera): '{LaptopDiagnostics.Path(c.transform)}'");
+                    // HDRP ignores stereoTargetEye ("only with the built-in renderer"): its own xrRendering flag made the
+                    // scope camera draw as a headset view into its 1024x1024 texture, and Unity logged "Dimensions of
+                    // color surface do not match depth surface" every frame while a magnifier was up (3500 times in a
+                    // session, 2026-11-04). Off for scope cameras while VR runs
+                    try
+                    {
+                        var hd = c.GetComponent<UnityEngine.Rendering.HighDefinition.HDAdditionalCameraData>();
+                        if (hd != null && hd.xrRendering)
+                        {
+                            hd.xrRendering = false;
+                            _scopeXr[c.Pointer] = hd;
+                        }
+                    }
+                    catch (Exception e) { Plugin.Logger.LogWarning($"[Cameras] scope XR off: {e.Message}"); }
+                    Plugin.Logger.LogInfo($"[Cameras] Scope camera kept on (as a plain camera, XR rendering off): '{LaptopDiagnostics.Path(c.transform)}'");
                 }
                 if (c == null || !c.enabled || (main != null && c.Pointer == main.Pointer) || IsOurs(c))
                     continue;
@@ -182,5 +197,8 @@ public class ExtraCameras : MonoBehaviour
         foreach (var (cam, eye) in _scopes.Values)
             try { if (cam != null) cam.stereoTargetEye = eye; } catch { }
         _scopes.Clear();
+        foreach (var hd in _scopeXr.Values)
+            try { if (hd != null) hd.xrRendering = true; } catch { }
+        _scopeXr.Clear();
     }
 }

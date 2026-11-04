@@ -220,7 +220,8 @@ internal static class InteractScanLog
             var interact = (GetAsyncKeyState(0x46) & 0x8000) != 0;
             var pressed = interact && !s_interactWas;
             s_interactWas = interact;
-            if (pressed && s_pressLogs < 40)
+            // (Diagnostics only now: the scene search behind it made each press hitch, 2026-11-04)
+            if (pressed && Plugin.Diagnostics.Value && s_pressLogs < 40)
             {
                 s_pressLogs++;
                 var h = __instance._interactableRayHit;

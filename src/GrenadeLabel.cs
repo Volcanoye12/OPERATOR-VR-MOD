@@ -48,6 +48,7 @@ public class GrenadeLabel : MonoBehaviour
     private string _shown = "";
     private TMP_FontAsset _font;
     private int _logs, _failLogs;
+    private string _lastSpoken;
 
     private void LateUpdate()
     {
@@ -62,6 +63,15 @@ public class GrenadeLabel : MonoBehaviour
             FindMe();
             var grenade = HeldGrenade();
             var cam = Camera.main;
+            GrenadeCommand(grenade);
+            // Say the grenade's name when one comes into your hand or you switch to another kind (Controls.GrenadeVoice)
+            var spoken = grenade != null ? DisplayName(BaseName(grenade.name)) : null;
+            if (spoken != _lastSpoken)
+            {
+                _lastSpoken = spoken;
+                if (spoken != null && Plugin.TouchControls.Value)
+                    VoiceBridge.Grenade(spoken);
+            }
             if (grenade == null || cam == null)
             {
                 Hide();
@@ -74,6 +84,83 @@ public class GrenadeLabel : MonoBehaviour
             Plugin.Logger.LogError($"[Grenade] label: {e.GetType().Name}: {e.Message}");
             Hide();
         }
+    }
+
+    // Spoken "frag grenade" / "nine bang" / "flashbang" (VoiceCommands, 2026-11-04): taps the game's grenade switch
+    // (SwitchGrenades, G) until that kind is in hand, a tap every GrenadeTapGap seconds (time for the switch to
+    // happen), up to 5 taps. Already in hand: the callout is said again. Not carried: nothing happens
+    private string _wantGrenade;
+    private int _grenadeTaps;
+    private float _nextGrenadeTap;
+    private bool _gDown;
+    private const float GrenadeTapGap = 0.7f;
+
+    [Il2CppInterop.Runtime.Attributes.HideFromIl2Cpp]
+    private void GrenadeCommand(Transform grenade)
+    {
+        if (_gDown)
+        {
+            _gDown = false;
+            TouchKeys.PressKey(KeyCode.G, false);
+        }
+        var held = grenade != null ? DisplayName(BaseName(grenade.name)) : null;
+        var cmd = VoiceBridge.TakeGrenadeCommand();
+        if (cmd != null && _me != null)
+        {
+            if (held == cmd)
+            {
+                VoiceBridge.Grenade(cmd);
+                _wantGrenade = null;
+            }
+            else if (!Carries(cmd))
+            {
+                Plugin.Logger.LogInfo($"[VoiceCmd] No {cmd} carried");
+                _wantGrenade = null;
+            }
+            else
+            {
+                _wantGrenade = cmd;
+                _grenadeTaps = 0;
+                _nextGrenadeTap = 0f;
+                Plugin.Logger.LogInfo($"[VoiceCmd] Bringing up the {cmd} (in hand now: {held ?? "no grenade"})");
+            }
+        }
+        if (_wantGrenade == null)
+            return;
+        if (held == _wantGrenade)
+        {
+            Plugin.Logger.LogInfo($"[VoiceCmd] {_wantGrenade} in hand after {_grenadeTaps} tap(s) of the grenade switch");
+            _wantGrenade = null;
+            return;
+        }
+        if (Time.unscaledTime < _nextGrenadeTap)
+            return;
+        if (_grenadeTaps >= 5)
+        {
+            Plugin.Logger.LogInfo($"[VoiceCmd] Gave up bringing up the {_wantGrenade} (in hand: {held ?? "no grenade"})");
+            _wantGrenade = null;
+            return;
+        }
+        _grenadeTaps++;
+        _nextGrenadeTap = Time.unscaledTime + GrenadeTapGap;
+        TouchKeys.PressKey(KeyCode.G, true);
+        _gDown = true;
+    }
+
+    /// <summary>Whether a grenade of this kind (plain name) is in hand or on the vest.</summary>
+    [Il2CppInterop.Runtime.Attributes.HideFromIl2Cpp]
+    private bool Carries(string kind)
+    {
+        var pouch = _me.GrenadeV2Pouch;
+        if (pouch == null)
+            return true;   // can't tell: try anyway
+        for (var i = 0; i < pouch.childCount; i++)
+        {
+            var c = pouch.GetChild(i);
+            if (c != null && c.gameObject.activeSelf && DisplayName(BaseName(c.name)) == kind)
+                return true;
+        }
+        return false;
     }
 
     private void FindMe()

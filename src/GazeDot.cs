@@ -30,7 +30,9 @@ public class GazeDot : MonoBehaviour
     }
 
     private bool ShouldShow() =>
-        OpenXRBootstrap.IsRunning && Plugin.GazeDot.Value && !Plugin.TouchControls.Value &&
+        // With the Touch controllers too (2026-11-04: no dot at the armoury wall or weapon bench): the game's scan
+        // follows its aim, which the right hand (or, holding Interact, the head) steers, so the dot is just as useful
+        OpenXRBootstrap.IsRunning && Plugin.GazeDot.Value &&
         Cursor.lockState == CursorLockMode.Locked && VRPointer.Target == null && !CustomisationScreen.Open;
 
     private void BeforeRender()
