@@ -17,12 +17,16 @@ This is an unofficial fan mod. It isn't made by or connected with the developers
 - **Menus float in front of you,** with a pointer you move with the right stick.
 - **Mission screen.** Missions are chosen on a large screen over the window blinds in the operations room. It shows time of day, preparation, enemy skill and count, infil points and the briefing.
 - **Weapon bench in VR.** The gun is shown smaller and turns like a turntable, with the parts list on the wall behind it.
+- **Faster in VR (new in 1.2.0):** foveated rendering on NVIDIA cards (full detail in the middle of each lens, less towards the edges) and lighter scope rendering.
 - **Scopes:**
   - Magnified scopes stay sharp.
-  - Flip-up magnifiers go dark while flipped aside.
+  - A scope shows its magnified picture when you lift it to your eye, and a black lens when it's lowered (which costs nothing to draw).
+  - Flip-up magnifiers go dark while flipped aside, and stay live while flipped up.
   - Sight brightness can be set from the pad.
+- **Character customisation in 3D (new in 1.2.0):** your character stands on the left of the customisation page as a 3D model you can turn, with the clothing panels on the right.
 - **Pad extras** (with the included Steam Input layout): lean with a held stick click while aiming, push-to-talk, next-weapon, manual and emergency reload, and a run toggle.
-- **On-screen extras:** a small status display with weapon, fire mode and grenades, plus screenshots (F3) and recording (Shift+F4).
+- **On-screen extras:** a small status display with a picture of your weapon, its fire mode and your grenades, plus screenshots (F3) and recording (Shift+F4).
+- **Switch controllers mid-game (new in 1.2.0):** press anything on the PS5 pad and the Touch controllers step aside; press A, B, X, Y or a trigger on a Touch controller to take over again.
 
 ## What you need
 
@@ -30,7 +34,7 @@ This is an unofficial fan mod. It isn't made by or connected with the developers
 - **BepInEx 6 (IL2CPP build)**. Tested with `6.0.0-be.791`. It's the mod loader.
 - **A PC VR headset** with an OpenXR runtime. Tested on a Quest 3 with **Virtual Desktop** (its VDXR runtime). SteamVR and Quest Link should also work, but haven't been tested as much.
 - **Touch controllers or a gamepad.** Meta/Oculus Touch controllers (see [Motion controllers](#motion-controllers-oculus-touch-new-in-110)), or a gamepad through Steam Input; a PS5 DualSense with the included layout is recommended.
-- **A reasonably strong PC.** Tested on an RTX 5060 Ti: a steady 40 fps at 80 Hz with Virtual Desktop SSW (frame smoothing).
+- **A reasonably strong PC.** Tested on an RTX 5060 Ti with a Ryzen 7 5700X: a steady 45 fps at 90 Hz with Virtual Desktop SSW (frame smoothing) at full render scale, or about 50 fps at 120 Hz with `RenderScale = 0.9`.
 
 ## Installing
 
@@ -50,7 +54,7 @@ This is an unofficial fan mod. It isn't made by or connected with the developers
 ### Using Virtual Desktop's runtime (recommended for Quest)
 
 Open `BepInEx\config\com.operatorvr.mod.cfg` and set `Runtime = VirtualDesktop` under `[VR]`. This bypasses SteamVR and is usually faster. Recommended Virtual Desktop settings:
-- **80 Hz** refresh rate.
+- **90 Hz** refresh rate (the game then runs at a steady 45 fps). 120 Hz also works with `RenderScale = 0.9`, at about 50 fps.
 - **Synchronous Spacewarp (SSW): Always enabled.**
 
 ## Keys
@@ -105,7 +109,7 @@ Version 1.1.0 adds full motion controls for **Oculus/Meta Touch controllers**. T
 
 - **Aim with your hand.** The gun points where the right controller points.
 - **Virtual stock.** Press the right grip: your right hand locks as the stock and your left hand steers the gun, which makes it much steadier. Press again to let go. **GUNSTOCK ACTIVATED** shows at the lower right while it's on.
-- **Lean by tilting your head** left or right (`HeadLeanAngle`, 8° by default).
+- **Lean** by holding a stick click while aiming. Leaning by tilting your head is also there but off by default (`HeadLean = true`, `HeadLeanAngle`).
 - **Vibration.** Both controllers kick when you fire, with short buzzes for the stock, double-taps and Interact.
 - **Tap, double-tap and hold actions:**
   - **B:** tap to crouch, double-tap to vault, hold to kick.
@@ -118,11 +122,22 @@ Version 1.1.0 adds full motion controls for **Oculus/Meta Touch controllers**. T
 
 Every button can be remapped (`TouchMap`, `TouchDoubleTap`, `TouchHold`), and each setting is explained in the settings file.
 
+## What's new in 1.2.0
+
+- **Speed:** foveated rendering through the NVIDIA driver (`FoveatedRendering`, 0 = off, 0.5 = medium). On the test PC the graphics card time per frame dropped from 18–20 ms to about 16–17 ms, enough for a steady 45 fps at 90 Hz (it was 40 at 80 Hz).
+- **Speed:** the mod's own work per frame was trimmed (about 2.6 ms → 2.1 ms), and a scope's picture skips effects you can't see in a small lens (`CheapScopes`).
+- **Scopes:** a fixed scope (ACOG, Elcan…) shows its picture when you lift it to your eye and a black lens when lowered (`ScopeAsideFrames = 0`; set 3 to keep a live, every-third-frame picture instead). This fixed the scope picture freezing when the gun was lowered.
+- **Magnifiers:** a flipped-up magnifier keeps a live picture when you're not aiming.
+- **Customisation page:** your character is shown in 3D on the left, in his current clothes, turned as you drag him (`Character3D`, `Character3DCloser` for his distance). The panels on the right stay flat.
+- **Status display:** the weapon picture is 30% brighter so it's easier to make out (`WeaponPictureBrightness`).
+- **Controllers:** switch between Touch and the PS5 pad mid-game, automatically or by holding both thumbsticks for 2 seconds (`AutoSwitchControls`).
+
 ## Settings
 
 All settings are in `BepInEx\config\com.operatorvr.mod.cfg`. The file is created on the first start, and each setting is explained there. The most useful ones:
 
 - `[Rendering] RenderScale`: sharpness against speed. 1.0 is full resolution; try 0.8–0.9 on slower PCs.
+- `[Rendering] FoveatedRendering`: NVIDIA cards only. 0.5 is a good start; 0 switches it off.
 - `[Rendering] AmbientOcclusion`, `TreeShadows`: switch shading and tree shadows on or off.
 - `[Menus] BenchGunSize`, `HealthArrowSize`: the weapon bench gun's size and the health-screen pointer's size.
 - `[Controls] LeanHoldTime`: how long a stick click must be held to lean.
