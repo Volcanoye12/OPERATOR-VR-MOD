@@ -31,7 +31,12 @@ public static class VoiceBridge
     private static string s_grenade;
 
     /// <summary>Virtual stock on (true) or off (false).</summary>
-    public static void CommandStock(bool on) => Interlocked.Exchange(ref s_stock, on ? 1 : 2);
+    public static void CommandStock(bool on)
+    {
+        // The virtual stock is a Touch thing: on the pad it's ignored rather than kept for when Touch comes back
+        if (Plugin.TouchControls.Value)
+            Interlocked.Exchange(ref s_stock, on ? 1 : 2);
+    }
 
     /// <summary>Laser on (true) or off (false).</summary>
     public static void CommandLaser(bool on) => Interlocked.Exchange(ref s_laser, on ? 1 : 2);
@@ -42,8 +47,10 @@ public static class VoiceBridge
     /// <summary>Bring up this grenade: "Frag", "Flashbang" or "9-Bang".</summary>
     public static void CommandGrenade(string kind) => Interlocked.Exchange(ref s_grenade, kind);
 
-    /// <summary>True while VR runs with the Touch controllers (when commands are worth listening for).</summary>
-    public static bool Listening => OpenXRBootstrap.IsRunning && Plugin.TouchControls.Value;
+    /// <summary>True while VR runs. It used to need the Touch controllers too, so the commands went silent whenever
+    /// the mod switched to the PS5 pad ("my voice commands seem to disappear", 2026-11-05: a whole session in pad
+    /// mode, never listening). Grenade, laser and magnifier commands work on either controller.</summary>
+    public static bool Listening => OpenXRBootstrap.IsRunning;
 
     // ---- Used inside the main mod ----
 

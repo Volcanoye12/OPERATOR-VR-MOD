@@ -221,14 +221,55 @@ public class StatusHud : MonoBehaviour
                  : Quaternion.identity;
         copy.transform.localRotation = Quaternion.Euler(-12f, 0f, 0f) * side;
         copy.transform.localPosition = new Vector3(PictureLeft + PictureLength / 2f, PictureY, 0f);
+        Brighten(copy);
         _weaponCopy = copy;
         _statusText.margin = new Vector4(PictureLength + 50f, 0f, 0f, 0f);
         if (_weaponLogs++ < 10)
             Plugin.Logger.LogInfo($"[Hud] Weapon picture of '{source.name}': {parts} parts, shape ({shape.x:0}, {shape.y:0}, {shape.z:0}) units");
     }
 
+    // "The weapon picture is quite dark, you can't really see it; brighten it by about 30%" (2026-11-05). The copy is lit
+    // by the scene like the real gun, and gun finishes are dark: its own copies of the materials get their base colour
+    // multiplied by Menus.WeaponPictureBrightness (the real gun keeps the game's)
+    private readonly List<Material> _brightMats = new();
+
+    [Il2CppInterop.Runtime.Attributes.HideFromIl2Cpp]
+    private void Brighten(GameObject copy)
+    {
+        var k = Mathf.Clamp(Plugin.WeaponPictureBrightness.Value, 0.5f, 3f);
+        if (Mathf.Abs(k - 1f) < 0.01f)
+            return;
+        var n = 0;
+        foreach (var r in copy.GetComponentsInChildren<Renderer>(true))
+        {
+            if (r == null)
+                continue;
+            var mats = r.materials;   // per-renderer copies: the real weapon's materials are untouched
+            foreach (var m in mats)
+            {
+                if (m == null)
+                    continue;
+                _brightMats.Add(m);
+                foreach (var prop in new[] { "_BaseColor", "_Color" })
+                    if (m.HasProperty(prop))
+                    {
+                        var c = m.GetColor(prop);
+                        m.SetColor(prop, new Color(c.r * k, c.g * k, c.b * k, c.a));
+                        n++;
+                    }
+            }
+            r.materials = mats;
+        }
+        if (_weaponLogs < 10)
+            Plugin.Logger.LogInfo($"[Hud] Weapon picture brightened x{k:0.00} ({n} material colours)");
+    }
+
     private void DropWeaponCopy()
     {
+        foreach (var m in _brightMats)
+            if (m != null)
+                UnityEngine.Object.Destroy(m);
+        _brightMats.Clear();
         if (_weaponCopy != null)
             UnityEngine.Object.Destroy(_weaponCopy);
         _weaponCopy = null;

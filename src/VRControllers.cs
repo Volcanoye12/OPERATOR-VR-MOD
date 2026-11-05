@@ -91,7 +91,7 @@ public class VRControllers : MonoBehaviour
                 if (!_pressed && trigger >= PressAt && !TouchKeys.Active)
                 {
                     _pressed = true;
-                    mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, UIntPtr.Zero);
+                    mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, (UIntPtr)(ulong)TouchKeys.OurInputMark);
                 }
             }
             if (_pressed && trigger <= ReleaseAt)
@@ -109,7 +109,7 @@ public class VRControllers : MonoBehaviour
         if (!_pressed)
             return;
         _pressed = false;
-        mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, UIntPtr.Zero);
+        mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, (UIntPtr)(ulong)TouchKeys.OurInputMark);
     }
 
     /// <summary>Right controller's aim ray in the game world, and its trigger (0..1).</summary>

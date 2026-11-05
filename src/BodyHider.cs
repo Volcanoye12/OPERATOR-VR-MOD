@@ -44,7 +44,7 @@ public class BodyHider : MonoBehaviour
     private bool _wasRunning;
     private readonly Dictionary<IntPtr, (Renderer r, ShadowCastingMode mode)> _hidden = new();
     private bool _logged;
-    private float _nextHandCheck;
+    private float _nextHandCheck, _nextTabletCheck;
     // The forearm bones themselves, for quick IsChildOf checks (comparing parent names cost an IL2CPP string each)
     private readonly List<Transform> _forearms = new();
 
@@ -73,7 +73,13 @@ public class BodyHider : MonoBehaviour
         }
         try { UpdateTorso(); }
         catch { }
-        try { UpdateTablets(); }
+        // Ten times a second is quick enough for a hand reaching the tablet (every frame measured each part's bounds)
+        if (Time.unscaledTime >= _nextTabletCheck)
+            try
+            {
+                _nextTabletCheck = Time.unscaledTime + 0.1f;
+                UpdateTablets();
+            }
         catch (Exception e)
         {
             // It failed silently before (tablet found, never hidden): say why, once
@@ -89,6 +95,7 @@ public class BodyHider : MonoBehaviour
         _nextScan = Time.unscaledTime + 2f;
         try
         {
+            using var __s = ModTime.Measure("BodyHider scan");
             Scan();
         }
         catch (Exception e)
@@ -188,9 +195,13 @@ public class BodyHider : MonoBehaviour
         {
             if (r == null || _tablets.ContainsKey(r.Pointer))
                 continue;
+            // Already hidden as gear and not tablet-like: nothing to decide again (most of the ~200 meshes)
+            if (_hidden.ContainsKey(r.Pointer) && _plainGear.Contains(r.Pointer))
+                continue;
             var t = r.transform;
-            var isTablet = !IsUnderAny(t, weaponParents) && !HasName(t, KeepNames) &&
-                           (IsUnderAny(t, tabletRoots) || HasName(t, TabletNames));
+            var (keepName, tabletName) = Names(r.Pointer, t);
+            var isTablet = !IsUnderAny(t, weaponParents) && !keepName &&
+                           (IsUnderAny(t, tabletRoots) || tabletName);
             // Hidden earlier as gear (before the tablet was recognised): hand it over to the tablet's rules
             if (isTablet && _hidden.TryGetValue(r.Pointer, out var was))
             {
@@ -210,7 +221,7 @@ public class BodyHider : MonoBehaviour
                 }
                 continue;
             }
-            if (IsUnder(t, ArmBones) || HasName(t, KeepNames) || IsUnderAny(t, weaponParents) || r.TryCast<LineRenderer>() != null)
+            if (IsUnder(t, ArmBones) || keepName || IsUnderAny(t, weaponParents) || r.TryCast<LineRenderer>() != null)
             {
                 // Listed with where it hangs, leaving out the gun's own parts
                 if (r.TryCast<SkinnedMeshRenderer>() == null && !IsUnderAny(t, weaponParents))
@@ -228,6 +239,10 @@ public class BodyHider : MonoBehaviour
             _hidden[r.Pointer] = (r, r.shadowCastingMode);
             r.shadowCastingMode = ShadowCastingMode.ShadowsOnly;
             hidden.Add(r.name);
+            // Hidden gear that isn't under the tablet: later scans skip it (a tablet recognised later still gets its
+            // parts back, since those are under the tablet's roots)
+            if (!IsUnderAny(t, tabletRoots))
+                _plainGear.Add(r.Pointer);
         }
 
         // The tablet's UI canvases (new ones too: the ATAK screen is a spawned clone), kept in step with the tablet
@@ -253,6 +268,18 @@ public class BodyHider : MonoBehaviour
                                   $"tablet parts: {_tablets.Count}; weapon parents: " +
                                   $"{string.Join(", ", weaponParents.ConvertAll(w => $"'{w.name}' @ {Parents(w, 4)}"))}");
         }
+    }
+
+    // Name checks walk every parent and fetch each name from the game (a string each): done once per mesh. Names don't
+    // change; a mesh that changes parent (a magazine into a hand) is handled by ShowWhatMovedToHands
+    private readonly Dictionary<IntPtr, (bool keep, bool tablet)> _names = new();
+    private readonly HashSet<IntPtr> _plainGear = new();
+
+    private (bool keep, bool tablet) Names(IntPtr key, Transform t)
+    {
+        if (!_names.TryGetValue(key, out var n))
+            _names[key] = n = (HasName(t, KeepNames), HasName(t, TabletNames));
+        return n;
     }
 
     private readonly List<Transform> _weaponParents = new();
@@ -422,6 +449,8 @@ public class BodyHider : MonoBehaviour
         if (_hidden.Count > 0)
             Plugin.Logger.LogInfo($"[Body] Body shown again ({_hidden.Count} meshes)");
         _hidden.Clear();
+        _plainGear.Clear();
+        _names.Clear();
         foreach (var (r, mode, _) in _tablets.Values)
             try
             {

@@ -89,7 +89,12 @@ public class ScopeGuard : MonoBehaviour
             return;
         var w = weapon.GetComponent<WeaponV3>();
         var fixedAds = w != null ? w.ADS_Fixed : null;
-        var current = fixedAds != null ? fixedAds.ads : null;
+        // Grenades (and anything else without sights) have no aiming point: the guard pressed the sight switch 3 times
+        // with a frag, flashbang or 9-bang in hand ("hidden sight 'none'"), and the scope was odd back on the rifle
+        // (2026-11-04). Only guns with sights are checked
+        if (fixedAds == null || weapon.GetComponentInChildren<ADS>(true) == null)
+            return;
+        var current = fixedAds.ads;
 
         // 1. Aiming through a sight that's hidden or switched off
         if (current == null || !current.gameObject.activeInHierarchy)

@@ -27,6 +27,20 @@ public class VREffects : MonoBehaviour
     // Sun glare in the headset (Rendering.SunGlare = false): bloom and screen-space lens flares
     private static readonly HashSet<string> GlareInVR = new() { "Bloom", "ScreenSpaceLensFlare" };
 
+    // The game's hit and flashbang feedback ('HighPain', 'Pain Volume', 'Flash Volume'): their lens effects only run
+    // while you're hurt or flashed, so they cost nothing otherwise and are kept (2026-11-04: "Yes, put them back")
+    private static bool IsFeedbackVolume(string name) =>
+        name.IndexOf("Pain", StringComparison.OrdinalIgnoreCase) >= 0 ||
+        name.IndexOf("Flash", StringComparison.OrdinalIgnoreCase) >= 0 ||
+        name.IndexOf("Suppress", StringComparison.OrdinalIgnoreCase) >= 0 ||
+        name.IndexOf("Damage", StringComparison.OrdinalIgnoreCase) >= 0;
+
+    // Camera-lens effects (Rendering.PlainLensEffects): a full-screen pass per eye each, and wrong in a headset
+    private static readonly HashSet<string> LensInVR = new()
+    {
+        "ChromaticAberration", "FilmGrain", "Vignette", "LensDistortion", "PaniniProjection",
+    };
+
     // Native pointer -> component, so each override is switched off (and back on) once
     private readonly Dictionary<IntPtr, VolumeComponent> _turnedOff = new();
     // Fog components whose volumetric part we turned off (the distance fog stays), with the original override
@@ -49,6 +63,13 @@ public class VREffects : MonoBehaviour
 
         try { UpdateSunShadows(); }
         catch (Exception e) { Plugin.Logger.LogError($"[Effects] sun shadows: {e.GetType().Name}: {e.Message}"); _nextRoofCheck = Time.unscaledTime + 10f; }
+        try { SunShadowsShared(); }
+        catch (Exception e)
+        {
+            if (!_sharedFailed)
+                Plugin.Logger.LogError($"[Effects] shared sun shadows: {e.GetType().Name}: {e.Message}");
+            _sharedFailed = true;
+        }
 
         if (Time.unscaledTime < _nextScan)
             return;
@@ -62,6 +83,7 @@ public class VREffects : MonoBehaviour
         try
         {
             FixCamera();
+            TrimScopeCameras();
             ApplyLodScale();
             ShadowsOff();
             SunGlareOff();
@@ -75,6 +97,7 @@ public class VREffects : MonoBehaviour
         {
             DisableNonStereoAddons();
             LogCustomPassesOncePerScene();
+            ProbesOnce();
         }
         catch (Exception e)
         {
@@ -104,13 +127,15 @@ public class VREffects : MonoBehaviour
                         continue;
                     }
                     if (!Disabled.Contains(type) && !(Plugin.VRPerformance.Value && CostlyInVR.Contains(type))
-                        && !(!Plugin.SunGlare.Value && GlareInVR.Contains(type)))
+                        && !(!Plugin.SunGlare.Value && GlareInVR.Contains(type))
+                        && !(Plugin.PlainLensEffects.Value && LensInVR.Contains(type) && !IsFeedbackVolume(v.name)))
                         continue;
                     comp.active = false;
                     _turnedOff[comp.Pointer] = comp;
                     Plugin.Logger.LogInfo($"[Effects] Turned off {type} in volume '{v.name}'");
                 }
             }
+            LogEffectsStillOn();
         }
         catch (Exception e)
         {
@@ -141,11 +166,83 @@ public class VREffects : MonoBehaviour
         FrameSettingsField.TransparentPrepass,
         FrameSettingsField.TransparentPostpass,
         FrameSettingsField.LowResTransparent,
+        // 2026-11-04: the volumetric lighting pass. Its fog is already off in every volume (VolumetricFogOff), but the
+        // camera still had the pass enabled
+        FrameSettingsField.Volumetrics,
+        FrameSettingsField.ReprojectionForVolumetrics,
     };
 
     private readonly Dictionary<IntPtr, (HDAdditionalCameraData hd, FrameSettings settings, FrameSettingsOverrideMask mask)> _frameSettings = new();
 
-    private void TrimFrameSettings(HDAdditionalCameraData hd)
+    // The scope's picture (2026-11-05, speed): while aiming it draws the whole scene a second time with the full set of
+    // effects, which is where the 45 fps dipped. In a small lens these can't be seen: the eyes' list plus ambient
+    // occlusion and the per-object decals. Shadows stay (without them the sun lights rooms through the roof)
+    private static readonly FrameSettingsField[] UnusedInScope =
+    {
+        FrameSettingsField.SSAO,
+        FrameSettingsField.Decals,
+    };
+
+    // ---- Sun shadows drawn once, shared (Rendering.SunShadowFrames) ----
+    // 2026-11-05, speed: the sun's shadow map was drawn for each eye every frame (and again for the scope). With the
+    // light set to update on request, HDRP draws it when asked and the other eye (and the scope) reuse it; asked every
+    // SunShadowFrames frames. The shadows stay fixed to the world; only which area they cover follows you a frame later
+    private readonly Dictionary<IntPtr, (HDAdditionalLightData hd, ShadowUpdateMode mode)> _sharedShadows = new();
+    private bool _sharedFailed;
+    private int _sharedLogs;
+
+    private void SunShadowsShared()
+    {
+        var every = Plugin.SunShadowFrames.Value;
+        if (every <= 0 || _sharedFailed)
+        {
+            SharedShadowsBack();
+            return;
+        }
+        foreach (var (light, _) in _suns.Values)
+        {
+            if (light == null)
+                continue;
+            if (!_sharedShadows.TryGetValue(light.Pointer, out var entry))
+            {
+                var hd = light.GetComponent<HDAdditionalLightData>();
+                if (hd == null)
+                    continue;
+                entry = (hd, hd.shadowUpdateMode);
+                _sharedShadows[light.Pointer] = entry;
+                hd.shadowUpdateMode = ShadowUpdateMode.OnDemand;
+                hd.RequestShadowMapRendering();
+                if (_sharedLogs++ < 4)
+                    Plugin.Logger.LogInfo($"[Effects] Sun '{light.name}': shadows drawn once every {every} frame(s), shared by both eyes " +
+                                          $"(was {entry.mode})");
+            }
+            else if (entry.hd != null && entry.hd.shadowUpdateMode != ShadowUpdateMode.OnDemand)
+                entry.hd.shadowUpdateMode = ShadowUpdateMode.OnDemand;   // the game set it back
+            if (entry.hd != null && Time.frameCount % every == 0)
+                entry.hd.RequestShadowMapRendering();
+        }
+    }
+
+    private void SharedShadowsBack()
+    {
+        foreach (var (hd, mode) in _sharedShadows.Values)
+            try { if (hd != null) hd.shadowUpdateMode = mode; } catch { }
+        _sharedShadows.Clear();
+    }
+
+    private void TrimScopeCameras()
+    {
+        if (!Plugin.CheapScopes.Value)
+            return;
+        foreach (var cam in ExtraCameras.ScopeCameras())
+        {
+            var hd = cam.GetComponent<HDAdditionalCameraData>();
+            if (hd != null)
+                TrimFrameSettings(hd, scope: true);
+        }
+    }
+
+    private void TrimFrameSettings(HDAdditionalCameraData hd, bool scope = false)
     {
         if (!Plugin.VRPerformance.Value)
             return;
@@ -153,13 +250,21 @@ public class VREffects : MonoBehaviour
         var mask = hd.renderingPathCustomFrameSettingsOverrideMask;
 
         // The game's camera script may apply its own settings again (e.g. after a graphics change), so check each scan
-        var off = Plugin.AllowDLSS.Value
+        var off = Plugin.AllowDLSS.Value && !scope
             ? Array.FindAll(UnusedInVR, f => f != FrameSettingsField.MotionVectors && f != FrameSettingsField.ObjectMotionVectors)
             : UnusedInVR;
+        if (scope)
+        {
+            var all = new List<FrameSettingsField>(off);
+            all.AddRange(UnusedInScope);
+            off = all.ToArray();
+        }
         // Shading in corners and under things back on (Rendering.AmbientOcclusion, 2026-11-03): at RenderScale 1.0
         // Georgia held 40 fps with the GPU at ~19.5 of 25 ms. HDRP's own pass, which draws both eyes (the game's
         // HTraceAO stays off: it only drew the left eye)
-        var aoOn = Plugin.AmbientOcclusion.Value;
+        var aoOn = Plugin.AmbientOcclusion.Value && !scope;
+        // (2026-11-05: subsurface scattering was put back on while the customisation page was open, for the
+        // character's eyes; the F3 close-ups looked the same and the user thought worse, so it was taken out again)
         if (aoOn)
             off = Array.FindAll(off, f => f != FrameSettingsField.SSAO);
         var needed = !hd.customRenderingSettings;
@@ -399,8 +504,71 @@ public class VREffects : MonoBehaviour
         }
     }
 
+    // Sun shadow layers (cascades), Rendering.SunShadowCascades: each layer draws the scene again from the sun
+    private readonly Dictionary<IntPtr, (HDShadowSettings s, bool overrideState, int value)> _cascadesCut = new();
+
+    private void CutCascades(VolumeComponent comp, string volume)
+    {
+        var want = Plugin.SunShadowCascades.Value;
+        if (want <= 0 || _cascadesCut.ContainsKey(comp.Pointer))
+            return;
+        var s = comp.TryCast<HDShadowSettings>();
+        if (s == null)
+            return;
+        want = Mathf.Clamp(want, 1, 4);
+        var p = s.cascadeShadowSplitCount;
+        if (p.overrideState && p.value <= want)
+            return;
+        _cascadesCut[comp.Pointer] = (s, p.overrideState, p.value);
+        Plugin.Logger.LogInfo($"[Effects] Sun shadow layers {(p.overrideState ? p.value.ToString() : "default")} -> {want} in volume '{volume}'");
+        p.overrideState = true;
+        p.value = want;
+    }
+
+    // Reflection probes re-captured every frame (Rendering.ReflectionProbesOnce): 6 views each, per frame
+    private readonly Dictionary<IntPtr, (HDProbe probe, ProbeSettings.RealtimeMode mode)> _probesOnce = new();
+
+    private void ProbesOnce()
+    {
+        if (!Plugin.ReflectionProbesOnce.Value)
+            return;
+        foreach (var o in UnityEngine.Object.FindObjectsByType(Il2CppType.Of<HDProbe>(), FindObjectsSortMode.None))
+        {
+            var p = o.TryCast<HDProbe>();
+            if (p == null || _probesOnce.ContainsKey(p.Pointer) || p.mode != ProbeSettings.Mode.Realtime
+                || p.realtimeMode != ProbeSettings.RealtimeMode.EveryFrame)
+                continue;
+            _probesOnce[p.Pointer] = (p, p.realtimeMode);
+            p.realtimeMode = ProbeSettings.RealtimeMode.OnEnable;
+            Plugin.Logger.LogInfo($"[Effects] Reflection probe '{p.name}' captured once instead of every frame in VR");
+        }
+    }
+
+    // Once per scene: which volume effects are still on after all of the above, for the next frame-rate pass
+    private string _effectsLoggedFor;
+
+    private void LogEffectsStillOn()
+    {
+        var scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
+        if (scene == _effectsLoggedFor)
+            return;
+        _effectsLoggedFor = scene;
+        var on = new SortedSet<string>();
+        foreach (var o in UnityEngine.Object.FindObjectsByType(Il2CppType.Of<Volume>(), FindObjectsSortMode.None))
+        {
+            var v = o.TryCast<Volume>();
+            if (v == null || !v.isActiveAndEnabled || v.sharedProfile == null)
+                continue;
+            foreach (var comp in v.sharedProfile.components)
+                if (comp != null && comp.active)
+                    on.Add(comp.GetIl2CppType().Name);
+        }
+        Plugin.Logger.LogInfo($"[Effects] Still on in '{scene}': {string.Join(", ", on)}");
+    }
+
     private void CapShadowDistance(VolumeComponent comp, string volume)
     {
+        CutCascades(comp, volume);
         var cap = Plugin.ShadowDistance.Value;
         if (cap <= 0f || _shadowCapped.ContainsKey(comp.Pointer))
             return;
@@ -810,6 +978,22 @@ public class VREffects : MonoBehaviour
         }
         _shadowCapped.Clear();
 
+        foreach (var (s, overrideState, value) in _cascadesCut.Values)
+            try
+            {
+                if (s == null)
+                    continue;
+                s.cascadeShadowSplitCount.overrideState = overrideState;
+                s.cascadeShadowSplitCount.value = value;
+            }
+            catch { }
+        _cascadesCut.Clear();
+
+        foreach (var (probe, mode) in _probesOnce.Values)
+            try { if (probe != null) probe.realtimeMode = mode; } catch { }
+        _probesOnce.Clear();
+        _effectsLoggedFor = null;
+
         foreach (var (light, shadows) in _shadowsOff.Values)
         {
             try
@@ -825,6 +1009,7 @@ public class VREffects : MonoBehaviour
         if (_shadowsOff.Count > 0)
             Plugin.Logger.LogInfo($"[Effects] Shadows back on for {_shadowsOff.Count} lights");
         _shadowsOff.Clear();
+        SharedShadowsBack();
         foreach (var (light, shadows) in _suns.Values)
             try { if (light != null) light.shadows = shadows; } catch { }
         _suns.Clear();

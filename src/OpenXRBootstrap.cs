@@ -54,7 +54,7 @@ public class OpenXRBootstrap : MonoBehaviour
     private const float AutoRetrySeconds = 10f;
     private bool _loggedFrontEndWait;
     private bool _wasInGame;
-    private int _pumpFrame;
+    private float _nextPump;
 
     // The game's loading screen and main menu scenes
     private static readonly string[] FrontEndScenes = { "ApplicationSplashScreen", "3d Menu" };
@@ -160,10 +160,11 @@ public class OpenXRBootstrap : MonoBehaviour
         }
 
         // The package pumps from Application.onBeforeRender. Every frame it took ~1.5 ms of the main thread (the mod's
-        // costliest part); the events it delivers (session state changes) don't need it that often: every 4th frame
-        if (_initialized && ++_pumpFrame >= 4)
+        // costliest part); the events it delivers (session state changes) don't need it that often. Every 4th frame was
+        // still ~0.4 ms/frame on average (2026-11-05): now five times a second, whatever the frame rate
+        if (_initialized && Time.realtimeSinceStartup >= _nextPump)
         {
-            _pumpFrame = 0;
+            _nextPump = Time.realtimeSinceStartup + 0.2f;
             PumpMessageLoop();
         }
     }
@@ -352,21 +353,8 @@ public class OpenXRBootstrap : MonoBehaviour
         _display.scaleOfAllRenderTargets = Mathf.Clamp(Plugin.RenderScale.Value, 0.3f, 1.5f);
         Log($"Render scale {_display.scaleOfAllRenderTargets:0.00}");
 
-        // Fixed foveated rendering (sharp in the middle, coarser towards the lens edges; the Quest 3 has no eye
-        // tracking). Unity's own switch: whether SteamVR / HDRP honour it here is unknown, so read it back and log
-        var fov = Mathf.Clamp01(Plugin.FoveatedRendering.Value);
-        if (fov > 0f)
-            try
-            {
-                _display.foveatedRenderingFlags = XRDisplaySubsystem.FoveatedRenderingFlags.None;
-                _display.foveatedRenderingLevel = fov;
-                Log($"Foveated rendering asked for at level {fov:0.00} (fixed): the display reports level " +
-                    $"{_display.foveatedRenderingLevel:0.00}, flags {_display.foveatedRenderingFlags}");
-            }
-            catch (Exception e)
-            {
-                Warn($"Foveated rendering not available: {e.GetType().Name}: {e.Message}");
-            }
+        // Foveated rendering: Unity's own switch did nothing with HDRP on D3D11 (2026-11-01); NvFoveation does it
+        // through the NVIDIA driver instead
 
         Log($"VR started: display={_display.running}, input={_input.running}, renderPasses={_display.GetRenderPassCount()}, " +
             $"eyeTexture={XRSettings.eyeTextureWidth}x{XRSettings.eyeTextureHeight}, device='{XRSettings.loadedDeviceName}'");

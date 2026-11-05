@@ -501,6 +501,53 @@ public class PadMacros : MonoBehaviour
         }
     }
 
+    // Magnifier flipped up but its picture black (2026-11-04, after going prone, and still black standing up): the
+    // game had gone back to aiming through the red dot hidden behind it, and the magnifier's camera only runs while
+    // its own ADS is the one in use. While aiming with the magnifier up, every half second the mod checks that the
+    // magnifier's ADS is the sight in use; if not, it sets the magnifier up again (red dot aside, magnifier's ADS
+    // switched off and on, which makes the game pick it), up to 3 times per aim
+    private float _magCheckAt = -1f;
+    private int _magTries;
+    private bool _magAimWas;
+
+    private void KeepMagnifierSelected()
+    {
+        if (_zoomMe == null)
+            return;
+        var aiming = false;
+        try { aiming = _zoomMe.isADS; } catch { }
+        if (aiming && !_magAimWas)
+        {
+            _magCheckAt = Time.unscaledTime + 0.3f;
+            _magTries = 0;
+        }
+        _magAimWas = aiming;
+        if (!aiming || Time.unscaledTime < _magCheckAt || _zoomMe.activeWeapon == null)
+            return;
+        _magCheckAt = Time.unscaledTime + 0.5f;
+        var f = _zoomMe.activeWeapon.GetComponentInChildren<FlipSights>(false);
+        if (f == null || !f.isFlipped)
+            return;
+        var magAds = f.ADSToDisableWhenSightDown;
+        if (magAds == null || (magAds.gameObject.activeInHierarchy && magAds._enabled))
+            return;
+        if (_magTries++ >= 3)
+            return;
+        Plugin.Logger.LogInfo($"[Pad] Magnifier '{f.name}' is up but the game aims through another sight: selecting the magnifier again (try {_magTries})");
+        s_inFlip = true;
+        try
+        {
+            var mods = f.ActualSightModParent != null ? f.ActualSightModParent.GetComponentsInChildren<WeaponMod>(true) : null;
+            if (mods != null)
+                foreach (var m in mods)
+                    if (m != null && m.mainADS != null)
+                        m.mainADS.gameObject.SetActive(false);
+            magAds.gameObject.SetActive(false);
+            magAds.gameObject.SetActive(true);   // ADS.OnEnable: the game picks this sight
+        }
+        finally { s_inFlip = false; }
+    }
+
     private bool ToggleScopeZoom()
     {
         if (_zoomMe == null)
@@ -642,6 +689,8 @@ public class PadMacros : MonoBehaviour
         try { UpdateCross(focused); } catch (Exception e) { Plugin.Logger.LogError($"[Pad] cross: {e.GetType().Name}: {e.Message}"); }
         try { if (OpenXRBootstrap.IsRunning && Plugin.FlipWithSightSwitch.Value) KeepScopeSelected(); }
         catch (Exception e) { Plugin.Logger.LogError($"[Pad] scope select: {e.GetType().Name}: {e.Message}"); }
+        try { if (OpenXRBootstrap.IsRunning && Plugin.FlipWithSightSwitch.Value) KeepMagnifierSelected(); }
+        catch (Exception e) { Plugin.Logger.LogError($"[Pad] magnifier select: {e.GetType().Name}: {e.Message}"); }
         try { UpdateWeaponCycle(focused); } catch (Exception e) { Plugin.Logger.LogError($"[Pad] next weapon: {e.GetType().Name}: {e.Message}"); }
         if (Plugin.Diagnostics.Value)
             try { LogReloadKeys(); } catch { }

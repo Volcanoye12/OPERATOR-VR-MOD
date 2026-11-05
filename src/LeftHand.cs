@@ -548,6 +548,7 @@ public class LeftHand : MonoBehaviour
         if (!_haveGamePose || !Targets(out var gamePos, out var gameRot, out var freePos, out var freeRot, out _, out _, out var gameYaw))
             return;
 
+        CalmFreeHand(gamePos, gameRot, gameYaw, ref freePos, ref freeRot);
         var targetPos = Vector3.Lerp(gamePos, freePos, _free);
         var targetRot = Quaternion.Slerp(gameRot, freeRot, _free);
         // Elbow down and out to the left of the body
@@ -558,6 +559,42 @@ public class LeftHand : MonoBehaviour
         _bentThisFrame = true;
         _lastSetPos = _hand.position;
         _lastTarget = targetPos;
+    }
+
+    // The free left hand waved about "way too quickly" (2026-11-04): it copied every move of the controller, full size
+    // and at once. Now it moves less (Controls.LeftHandMovement: its offset from the gun's grip scaled down) and eases
+    // after the controller (Controls.LeftHandSmoothing, how fast it catches up). Kept relative to the gun's aim, so
+    // turning doesn't leave it behind; it starts from the grip each time it leaves the gun. Only what's drawn changes:
+    // grabbing and letting go of the gun still go by where the controller really is
+    private Vector3 _calmRel;
+    private Quaternion _calmRot = Quaternion.identity;
+    private bool _calmHave;
+
+    [Il2CppInterop.Runtime.Attributes.HideFromIl2Cpp]
+    private void CalmFreeHand(Vector3 gamePos, Quaternion gameRot, float gameYaw, ref Vector3 freePos, ref Quaternion freeRot)
+    {
+        if (!HeadTracking.TryGetGameAim(out var pitch, out var yaw))
+            return;
+        var aimRot = Quaternion.Euler(pitch, yaw, 0f);
+        var inv = Quaternion.Inverse(aimRot);
+        var scale = Mathf.Clamp(Plugin.LeftHandMovement.Value, 0.1f, 1f);
+        var wantPos = gamePos + (freePos - gamePos) * scale;
+        var wantRel = inv * (wantPos - _rightHand.position);
+        var wantRot = Quaternion.Slerp(gameRot, freeRot, scale);
+        var wantRotRel = inv * wantRot;
+
+        // Leaving the gun (or the first time): start from the grip
+        if (!_calmHave || _free <= 0.001f)
+        {
+            _calmHave = true;
+            _calmRel = inv * (gamePos - _rightHand.position);
+            _calmRot = inv * gameRot;
+        }
+        var k = 1f - Mathf.Exp(-Mathf.Max(0.5f, Plugin.LeftHandSmoothing.Value) * Time.unscaledDeltaTime);
+        _calmRel = Vector3.Lerp(_calmRel, wantRel, k);
+        _calmRot = Quaternion.Slerp(_calmRot, wantRotRel, k);
+        freePos = _rightHand.position + aimRot * _calmRel;
+        freeRot = aimRot * _calmRot;
     }
 
     /// <summary>Where the game has just put the left hand, relative to the right hand.</summary>

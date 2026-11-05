@@ -179,8 +179,14 @@ public class TouchKeys : MonoBehaviour
                         UpdateButton(twin, !(inMenu && m.Button == "A") && IsPressed(m.Button));
                     }
 
+            var autoAds = UpdateAutoAds(right, inMenu);
             foreach (var m in _map)
             {
+                if (autoAds && string.Equals(m.Action, "Aim", StringComparison.OrdinalIgnoreCase))
+                {
+                    UpdateButton(m, true);
+                    continue;
+                }
                 if (holdInteract && string.Equals(m.Action, "Interact", StringComparison.OrdinalIgnoreCase))
                 {
                     if (m == interactLead)
@@ -215,6 +221,7 @@ public class TouchKeys : MonoBehaviour
             // In a menu the right stick's up/down scrolls (the mouse wheel); on the bench too, for its parts list
             UpdateMenuScroll(inMenu ? look.y : 0f);
             UpdateHeadLean(inMenu);
+            UpdateSway(Plugin.HandAimNoSway.Value && (Plugin.HandAimPitch.Value || Plugin.HandAimYaw.Value));
             StockOn = _stockOn && Time.unscaledTime - _stockLastCall < 0.5f;
             var curve = look.sqrMagnitude > 0.15f * 0.15f ? look * look.magnitude : Vector2.zero; // finer near the centre
             var move = Vector2.zero;
@@ -565,7 +572,10 @@ public class TouchKeys : MonoBehaviour
 
         var dir = worldRot * Vector3.forward;
         if (!_lookToInteract)
+        {
             dir = VirtualStock(right, dir);
+            dir = SmoothAim(dir);
+        }
         // Unity pitch: positive looks down (the hand offset only applies to the hand)
         var handPitch = -Mathf.Asin(Mathf.Clamp(dir.y, -1f, 1f)) * Mathf.Rad2Deg + (_lookToInteract ? 0f : Plugin.HandAimPitchOffset.Value);
         var handYaw = Mathf.Atan2(dir.x, dir.z) * Mathf.Rad2Deg;
@@ -654,6 +664,105 @@ public class TouchKeys : MonoBehaviour
 
     private static float Yaw(Vector3 d) => Mathf.Atan2(d.x, d.z) * Mathf.Rad2Deg;
     private static float Pitch(Vector3 d) => Mathf.Asin(Mathf.Clamp(d.y, -1f, 1f)) * Mathf.Rad2Deg;
+
+    // Weapon sway off while aiming with the hand (Controls.HandAimNoSway). The game's WeaponSwayV2 swings the gun on
+    // springs against the mouse's movement (and bobs it as you walk). Hand aiming moves the "mouse" every frame, so
+    // the gun was always swinging and settling: "bouncy", "floaty", even with the smoothing (2026-11-04). Switched off
+    // on the player's weapons while the hand aims, back on otherwise. Checked every 2 s (weapons come and go)
+    private readonly Dictionary<IntPtr, WeaponSwayV2> _swayOff = new();
+    private float _nextSwayScan;
+    private bool _swayLogged;
+
+    private void UpdateSway(bool want)
+    {
+        if (!want)
+        {
+            if (_swayOff.Count == 0)
+                return;
+            foreach (var s in _swayOff.Values)
+                try { if (s != null) s.EnableSway = true; } catch { }
+            _swayOff.Clear();
+            Plugin.Logger.LogInfo("[Touch] Weapon sway back on");
+            return;
+        }
+        if (Time.unscaledTime < _nextSwayScan)
+            return;
+        _nextSwayScan = Time.unscaledTime + 2f;
+        try
+        {
+            foreach (var o in UnityEngine.Object.FindObjectsByType(Il2CppType.Of<WeaponSwayV2>(), FindObjectsSortMode.None))
+            {
+                var s = o.TryCast<WeaponSwayV2>();
+                if (s == null || !s.EnableSway || !s.transform.root.name.Contains("MyPlayer"))
+                    continue;
+                s.EnableSway = false;
+                s.ResetValues = true;   // settle the springs where they are
+                _swayOff[s.Pointer] = s;
+                if (!_swayLogged)
+                {
+                    _swayLogged = true;
+                    Plugin.Logger.LogInfo($"[Touch] Weapon sway off while aiming with the hand ('{s.name}')");
+                }
+            }
+        }
+        catch (Exception e)
+        {
+            _nextSwayScan = Time.unscaledTime + 10f;
+            Plugin.Logger.LogWarning($"[Touch] weapon sway: {e.GetType().Name}: {e.Message}");
+        }
+    }
+
+    // Hand-aim smoothing (Controls.HandAimSmoothing; 2026-11-04: "the gun seems like it was floating around in my
+    // hand, couldn't keep it steady"). A "one euro" filter on the aim's left/right and up/down angles: when the hand is
+    // nearly still it filters hard, so the small shake of a hand held out doesn't reach the gun; when it moves the
+    // filter opens up with the speed, so a deliberate swing isn't slowed. HandAimMinCutoff sets how hard it filters at
+    // rest (lower = steadier), HandAimBeta how quickly it opens up with speed (higher = less lag on fast swings)
+    private float _smYaw, _smPitch, _smDYaw, _smDPitch, _smLast = -10f;
+    private bool _smHave;
+
+    private Vector3 SmoothAim(Vector3 dir)
+    {
+        if (!Plugin.HandAimSmoothing.Value)
+        {
+            _smHave = false;
+            return dir;
+        }
+        var now = Time.unscaledTime;
+        var dt = now - _smLast;
+        _smLast = now;
+        var yaw = Mathf.Atan2(dir.x, dir.z) * Mathf.Rad2Deg;
+        var pitch = Mathf.Asin(Mathf.Clamp(dir.y, -1f, 1f)) * Mathf.Rad2Deg;
+        // First frame, or a gap (a menu, Interact, a load): start from where the hand is
+        if (!_smHave || dt <= 0f || dt > 0.3f)
+        {
+            _smHave = true;
+            _smYaw = yaw;
+            _smPitch = pitch;
+            _smDYaw = _smDPitch = 0f;
+            return dir;
+        }
+        var minCutoff = Mathf.Max(0.05f, Plugin.HandAimMinCutoff.Value);
+        var beta = Mathf.Max(0f, Plugin.HandAimBeta.Value);
+        const float dCutoff = 1f;
+
+        static float Alpha(float cutoff, float dt)
+        {
+            var tau = 1f / (2f * Mathf.PI * cutoff);
+            return 1f / (1f + tau / dt);
+        }
+
+        // Left/right (around the circle, so 359° -> 1° is a 2° step) and up/down, each filtered on its own
+        var yawStep = Mathf.DeltaAngle(_smYaw, yaw);
+        var dYaw = yawStep / dt;
+        _smDYaw += Alpha(dCutoff, dt) * (dYaw - _smDYaw);
+        _smYaw += Alpha(minCutoff + beta * Mathf.Abs(_smDYaw), dt) * yawStep;
+
+        var dPitch = (pitch - _smPitch) / dt;
+        _smDPitch += Alpha(dCutoff, dt) * (dPitch - _smDPitch);
+        _smPitch += Alpha(minCutoff + beta * Mathf.Abs(_smDPitch), dt) * (pitch - _smPitch);
+
+        return Quaternion.Euler(-_smPitch, _smYaw, 0f) * Vector3.forward;
+    }
 
     private float _stockLastCall = -10f;
 
@@ -904,7 +1013,7 @@ public class TouchKeys : MonoBehaviour
 
     private static readonly Dictionary<string, bool> s_dpadDown = new(StringComparer.OrdinalIgnoreCase);
 
-    private static bool IsPressed(string button)
+    internal static bool IsPressed(string button)
     {
         if (DpadDirs.TryGetValue(button, out var pad))
         {
@@ -1387,6 +1496,7 @@ public class TouchKeys : MonoBehaviour
     private void ReleaseAll()
     {
         UpdateMenuClick(false);
+        UpdateSway(false);
         StockOn = false;
         if (_headLean != 0)
         {
@@ -1408,6 +1518,39 @@ public class TouchKeys : MonoBehaviour
     /// <summary>Presses or lets go of a key as a real keyboard would (for PadMacros).</summary>
     internal static void PressKey(KeyCode key, bool down) => Press((int)key, down);
 
+    // Auto-ADS (2026-11-04, "Can we have auto-ADS"): raise the gun to your face and the game aims down the sights, as
+    // if the Aim button (left trigger) were held; lower it and it stops. "At your face" = the right controller within
+    // Controls.AutoAdsDistance of the eyes and pointing within AutoAdsAngle of where you look. It lets go a little
+    // further out (5 cm, 10°) so it doesn't flicker at the edge. The left trigger still aims as before
+    private bool _autoAdsOn;
+    private int _autoAdsLogs;
+
+    private bool UpdateAutoAds(InputDevice right, bool inMenu)
+    {
+        // The pointer pose: the same one the hand aim steers the gun by
+        if (!Plugin.AutoAds.Value || inMenu || WeaponBench.Open || !right.isValid ||
+            !XRFeature.Vector3(right.deviceId, "PointerPosition", out var handPos) ||
+            !XRFeature.Quaternion(right.deviceId, "PointerRotation", out var handRot))
+        {
+            if (_autoAdsOn)
+                Plugin.Logger.LogInfo("[Touch] Auto-ADS off");
+            _autoAdsOn = false;
+            return false;
+        }
+        var headPos = InputTracking.GetLocalPosition(XRNode.CenterEye);
+        var headRot = InputTracking.GetLocalRotation(XRNode.CenterEye);
+        var dist = Vector3.Distance(handPos, headPos);
+        var angle = Vector3.Angle(handRot * Vector3.forward, headRot * Vector3.forward);
+        var maxDist = Plugin.AutoAdsDistance.Value + (_autoAdsOn ? 0.05f : 0f);
+        var maxAngle = Plugin.AutoAdsAngle.Value + (_autoAdsOn ? 10f : 0f);
+        var on = dist <= maxDist && angle <= maxAngle;
+        if (on != _autoAdsOn && _autoAdsLogs++ < 20)
+            Plugin.Logger.LogInfo($"[Touch] Auto-ADS {(on ? "on" : "off")}: hand {dist * 100f:0} cm from the eyes, " +
+                                  $"pointing {angle:0}° off where you look");
+        _autoAdsOn = on;
+        return on;
+    }
+
     private static void Press(int keyCode, bool down)
     {
         switch (keyCode)
@@ -1426,7 +1569,7 @@ public class TouchKeys : MonoBehaviour
         }
         var scan = (ushort)MapVirtualKey(vk, 0);
         var flags = KEYEVENTF_SCANCODE | (extended ? KEYEVENTF_EXTENDEDKEY : 0) | (down ? 0 : KEYEVENTF_KEYUP);
-        var input = new INPUT { type = INPUT_KEYBOARD, ki = new KEYBDINPUT { wVk = (ushort)vk, wScan = scan, dwFlags = flags } };
+        var input = new INPUT { type = INPUT_KEYBOARD, ki = new KEYBDINPUT { wVk = (ushort)vk, wScan = scan, dwFlags = flags, extra = OurInputMark } };
         SendInput(1, new[] { input }, Marshal.SizeOf<INPUT>());
     }
 
@@ -1437,9 +1580,13 @@ public class TouchKeys : MonoBehaviour
 
     private static void Mouse(uint flags, int dx, int dy, uint data)
     {
-        var input = new INPUT { type = INPUT_MOUSE, mi = new MOUSEINPUT { dx = dx, dy = dy, mouseData = data, dwFlags = flags } };
+        var input = new INPUT { type = INPUT_MOUSE, mi = new MOUSEINPUT { dx = dx, dy = dy, mouseData = data, dwFlags = flags, extra = OurInputMark } };
         SendInput(1, new[] { input }, Marshal.SizeOf<INPUT>());
     }
+
+    /// <summary>Tag on every key and mouse event the mod sends ("OVR!"), so ControlSwitch can tell them from the
+    /// PS5 pad's (Steam Input) and a real keyboard's.</summary>
+    internal static readonly IntPtr OurInputMark = (IntPtr)0x4F565221;
 
     /// <summary>Unity KeyCode -> Windows virtual-key code (and whether it's an extended key).</summary>
     private static (uint vk, bool extended) ToVirtualKey(int k)

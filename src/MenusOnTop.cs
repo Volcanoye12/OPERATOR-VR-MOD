@@ -167,7 +167,8 @@ public class MenusOnTop : MonoBehaviour
                 }
                 Put(c.gameObject);
             }
-            Resync();
+            using (ModTime.Measure("MenusOnTop resync"))
+                Resync();
         }
         catch (Exception e)
         {

@@ -166,18 +166,31 @@ public class VRMenus : MonoBehaviour
         }
     }
 
+    // Canvases already looked at and left alone (nested, world-space, or under a camera): skipped without asking the
+    // game about each one four times a second. Forgotten every 10 s, in case the game switches one to overlay
+    private readonly HashSet<IntPtr> _notOverlay = new();
+    private float _forgetNotOverlayAt;
+
     private void ConvertNewOverlays()
     {
+        if (Time.unscaledTime >= _forgetNotOverlayAt)
+        {
+            _forgetNotOverlayAt = Time.unscaledTime + 10f;
+            _notOverlay.Clear();
+        }
         foreach (var o in UnityEngine.Object.FindObjectsByType(Il2CppType.Of<Canvas>(), FindObjectsSortMode.None))
         {
-            var c = o.TryCast<Canvas>();
-            if (c == null || !c.isRootCanvas || c.renderMode != RenderMode.ScreenSpaceOverlay)
+            if (o == null || _converted.ContainsKey(o.Pointer) || _notOverlay.Contains(o.Pointer))
                 continue;
-            if (_converted.ContainsKey(c.Pointer))
+            var c = o.TryCast<Canvas>();
+            if (c == null)
                 continue;
             // Canvases parented under a camera belong to that view (e.g. the mission laptop's screen); leave them
-            if (c.GetComponentInParent<Camera>() != null)
+            if (!c.isRootCanvas || c.renderMode != RenderMode.ScreenSpaceOverlay || c.GetComponentInParent<Camera>() != null)
+            {
+                _notOverlay.Add(c.Pointer);
                 continue;
+            }
 
             var rt = c.GetComponent<RectTransform>();
             var t = c.transform;

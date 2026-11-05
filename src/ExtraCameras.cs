@@ -81,6 +81,17 @@ public class ExtraCameras : MonoBehaviour
     private readonly Dictionary<IntPtr, UnityEngine.Rendering.HighDefinition.HDAdditionalCameraData> _scopeXr = new();
     private static ExtraCameras s_instance;
 
+    /// <summary>The scope cameras found so far (VREffects trims what they draw).</summary>
+    internal static List<Camera> ScopeCameras()
+    {
+        var list = new List<Camera>();
+        if (s_instance != null)
+            foreach (var (cam, _) in s_instance._scopes.Values)
+                if (cam != null)
+                    list.Add(cam);
+        return list;
+    }
+
     private void Start() => s_instance = this;
 
     /// <summary>A magnified scope's camera is drawing right now (the scope is on the gun and in use).</summary>
@@ -129,6 +140,12 @@ public class ExtraCameras : MonoBehaviour
         }
         _wasRunning = true;
 
+        // The magnifier still went black, or froze on one picture, with the same "Dimensions of color surface do not
+        // match depth surface" error each frame (2026-11-04 evening): the scope camera had gone back to drawing as a
+        // headset view after the mod set it once. Kept off every frame now
+        try { KeepScopesPlain(); }
+        catch { }
+
         if (Time.unscaledTime < _nextScan)
             return;
         _nextScan = Time.unscaledTime + 2f;
@@ -174,6 +191,32 @@ public class ExtraCameras : MonoBehaviour
         {
             Plugin.Logger.LogError($"[Cameras] {e.GetType().Name}: {e.Message}");
             _nextScan = Time.unscaledTime + 10f;
+        }
+    }
+
+    private int _scopeRevertLogs;
+
+    private void KeepScopesPlain()
+    {
+        foreach (var (cam, _) in _scopes.Values)
+        {
+            if (cam == null)
+                continue;
+            var reverted = false;
+            if (cam.stereoTargetEye != StereoTargetEyeMask.None)
+            {
+                cam.stereoTargetEye = StereoTargetEyeMask.None;
+                reverted = true;
+            }
+            var hd = cam.GetComponent<UnityEngine.Rendering.HighDefinition.HDAdditionalCameraData>();
+            if (hd != null && hd.xrRendering)
+            {
+                hd.xrRendering = false;
+                _scopeXr[cam.Pointer] = hd;
+                reverted = true;
+            }
+            if (reverted && _scopeRevertLogs++ < 10)
+                Plugin.Logger.LogInfo($"[Cameras] Scope camera '{cam.name}' had gone back to drawing as a headset view: set back to a plain camera");
         }
     }
 

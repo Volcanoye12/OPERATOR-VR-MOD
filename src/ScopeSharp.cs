@@ -254,6 +254,8 @@ public class ScopeSharp : MonoBehaviour
             if (f == null || lens == null)
                 continue;
             var off = !f.isFlipped;
+            // (A frozen picture while up is MagnifierLive's job: re-setting camEnabled here every frame didn't keep the
+            // camera drawing)
             if (lens.forceRenderingOff == off)
                 continue;
             lens.forceRenderingOff = off;

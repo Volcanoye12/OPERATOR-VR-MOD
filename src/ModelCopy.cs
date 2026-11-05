@@ -48,9 +48,7 @@ internal static class ModelCopy
             part.transform.SetParent(inner.transform, false);
             // The part's place relative to the object
             var m = toLocal * r.transform.localToWorldMatrix;
-            part.transform.localPosition = m.GetColumn(3);
-            part.transform.localRotation = Quaternion.LookRotation(m.GetColumn(2), m.GetColumn(1));
-            part.transform.localScale = new Vector3(((Vector3)m.GetColumn(0)).magnitude, ((Vector3)m.GetColumn(1)).magnitude, ((Vector3)m.GetColumn(2)).magnitude);
+            SetFromMatrix(part.transform, m);
             part.AddComponent<MeshFilter>().sharedMesh = mesh;
             var mr = part.AddComponent<MeshRenderer>();
             mr.sharedMaterials = r.sharedMaterials;
@@ -67,6 +65,19 @@ internal static class ModelCopy
         shape = bounds.size * scale;
         SetLayer(copy.transform, layer);
         return copy;
+    }
+
+    /// <summary>Position, rotation and scale from a matrix, keeping a mirror (negative determinant) as a negative x
+    /// scale: with every scale positive a mirrored part came out inside out, so you saw through it.</summary>
+    internal static void SetFromMatrix(Transform t, Matrix4x4 m)
+    {
+        var x = (Vector3)m.GetColumn(0);
+        var y = (Vector3)m.GetColumn(1);
+        var z = (Vector3)m.GetColumn(2);
+        var mirrored = Vector3.Dot(Vector3.Cross(x, y), z) < 0f;
+        t.localPosition = m.GetColumn(3);
+        t.localRotation = Quaternion.LookRotation(z, y);
+        t.localScale = new Vector3(mirrored ? -x.magnitude : x.magnitude, y.magnitude, z.magnitude);
     }
 
     private static Bounds TransformBounds(Bounds b, Vector3 pos, Quaternion rot, Vector3 scale)

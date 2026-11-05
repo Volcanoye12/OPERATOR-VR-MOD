@@ -10,14 +10,15 @@ public class Plugin : BasePlugin
 {
     public const string Guid = "com.operatorvr.mod";
     public const string Name = "OperatorVR";
-    public const string Version = "1.1.0";
+    public const string Version = "1.2.0";
 
     internal static ManualLogSource Logger;
     internal static ConfigEntry<OpenXRNative.RenderMode> StereoRenderMode;
     internal static ConfigEntry<bool> SkipExtraCameras;
     internal static ConfigEntry<float> RenderScale;
     internal static ConfigEntry<bool> AntiAliasing;
-    internal static ConfigEntry<bool> VRPerformance;
+    internal static ConfigEntry<bool> VRPerformance, PlainLensEffects, ReflectionProbesOnce;
+    internal static ConfigEntry<int> SunShadowCascades;
     internal static ConfigEntry<float> ViewDistance;
     internal static ConfigEntry<float> LodScale;
     internal static ConfigEntry<float> ShadowDistance;
@@ -31,7 +32,8 @@ public class Plugin : BasePlugin
     internal static ConfigEntry<bool> HeadAimPitch;
     internal static ConfigEntry<bool> SteadyEyeHeight, LockEyeWhenAiming, ExactMagCount;
     internal static ConfigEntry<string> RecenterKey;
-    internal static ConfigEntry<bool> CustomisationScreen;
+    internal static ConfigEntry<bool> CustomisationScreen, Character3D, CheapScopes;
+    internal static ConfigEntry<int> SunShadowFrames;
     internal static ConfigEntry<bool> WeaponBenchOnTop;
     internal static ConfigEntry<float> BenchGunSize;
     internal static ConfigEntry<float> HealthArrowSize;
@@ -43,8 +45,9 @@ public class Plugin : BasePlugin
     internal static ConfigEntry<bool> GazeDot;
     internal static ConfigEntry<bool> Diagnostics;
     internal static ConfigEntry<bool> PadRangeSwitch;
-    internal static ConfigEntry<bool> FlipWithSightSwitch, DarkMagnifierAside;
+    internal static ConfigEntry<bool> FlipWithSightSwitch, DarkMagnifierAside, KeepMagnifierLive;
     internal static ConfigEntry<bool> SharpScopes, ScopeGuard;
+    internal static ConfigEntry<int> ScopeAsideFrames;
     internal static ConfigEntry<float> Saturation, Contrast, NightVisionLensScale, FoveatedRendering, DlssPercent;
     internal static ConfigEntry<bool> AllowDLSS;
     internal static ConfigEntry<bool> NightVisionFill;
@@ -59,7 +62,7 @@ public class Plugin : BasePlugin
     internal static ConfigEntry<float> InteractReach;
     internal static ConfigEntry<bool> PauseInMainMenu, InteractPastGun;
     internal static ConfigEntry<bool> GroundLod, GroundShadows, GroundTessellation, GrenadeCount, MagModel, StickClickLean, SunShadows, StatusHud, Compass, TalkIndicator, RecenterOnLoad, WeaponPicture, SunShadowsOutdoors, AmbientOcclusion, TreeShadows;
-    internal static ConfigEntry<float> AmbientOcclusionStrength;
+    internal static ConfigEntry<float> AmbientOcclusionStrength, WeaponPictureBrightness, Character3DCloser;
     internal static ConfigEntry<float> OnlineViewDistance, OnlineLodScale, HudDistance, HudSize;
     internal static ConfigEntry<bool> TouchAsGamepad;
     internal static ConfigEntry<bool> TouchControls;
@@ -78,7 +81,10 @@ public class Plugin : BasePlugin
     internal static ConfigEntry<float> HandAimPitchOffset;
     internal static ConfigEntry<bool> VirtualStock;
     internal static ConfigEntry<string> VirtualStockButton;
-    internal static ConfigEntry<bool> Haptics, HapticsBothHands, HeadLean;
+    internal static ConfigEntry<bool> Haptics, HapticsBothHands, HeadLean, HandAimSmoothing, HandAimNoSway;
+    internal static ConfigEntry<float> HandAimMinCutoff, HandAimBeta, LeftHandMovement, LeftHandSmoothing;
+    internal static ConfigEntry<bool> AutoAds, AutoSwitchControls;
+    internal static ConfigEntry<float> AutoAdsDistance, AutoAdsAngle;
     internal static ConfigEntry<float> HapticsShot, HeadLeanAngle, LeanSpeed, MagLabelHeight;
     internal static ConfigEntry<bool> VirtualStockToggle;
     internal static ConfigEntry<OpenXRNative.DepthSubmissionMode> DepthSubmission;
@@ -120,6 +126,17 @@ public class Plugin : BasePlugin
             "simpler models sooner. 1 = leave it.");
         ShadowDistance = Config.Bind("Rendering", "ShadowDistance", 60f,
             "While VR runs, shadows are drawn only this far (metres); shadows are drawn once per eye. 0 = leave the game's.");
+        // 2026-11-04 frame-rate pass ("Should we not get rid of the HDRP?" - it can't be removed, so the costly parts
+        // that were still on go, each behind its own switch to compare fps in the log)
+        SunShadowCascades = Config.Bind("Rendering", "SunShadowCascades", 2,
+            "While VR runs, the sun's shadows are drawn in this many layers (1-4; the game uses up to 4). Fewer is faster; " +
+            "shadows past a few metres get a little softer. 0 = leave the game's.");
+        PlainLensEffects = Config.Bind("Rendering", "PlainLensEffects", true,
+            "While VR runs, the camera-lens effects are off: chromatic aberration, film grain, vignette, lens distortion, " +
+            "panini projection. Each is a full-screen pass per eye, and they look wrong in a headset anyway.");
+        ReflectionProbesOnce = Config.Bind("Rendering", "ReflectionProbesOnce", true,
+            "While VR runs, reflection probes the game re-captures every frame (6 extra views each) are captured once " +
+            "when they switch on instead.");
 
         Shadows = Config.Bind("Rendering", "Shadows", false,
             "Draw shadows in VR. Off by default: shadows are drawn once per eye and looked unsteady in the headset. " +
@@ -295,6 +312,37 @@ public class Plugin : BasePlugin
             "from the stock through the left hand). Let go to aim with the right controller again.");
         VirtualStockButton = Config.Bind("Controls", "VirtualStockButton", "RightGrip",
             "The Touch button held for the virtual stock (A, B, X, Y, RightGrip, LeftGrip, ...). Don't also map it in TouchMap.");
+        LeftHandMovement = Config.Bind("Controls", "LeftHandMovement", 0.6f,
+            "How much the character's free left hand moves compared with your real left controller (0.1 to 1; 1 = the " +
+            "same). Lower = calmer, smaller movements around the gun's grip.");
+        LeftHandSmoothing = Config.Bind("Controls", "LeftHandSmoothing", 6f,
+            "How quickly the character's free left hand catches up with your controller (per second; 0.5 to 20). Lower = " +
+            "slower and smoother, higher = snappier.");
+        AutoSwitchControls = Config.Bind("Controls", "AutoSwitchControls", true,
+            "Switch between the Touch controllers and a gamepad by themselves: pressing anything on the PS5 pad makes the " +
+            "Touch controllers step aside; pressing A, B, X, Y or a trigger on a Touch controller hands control back. " +
+            "(Both thumbsticks held in for 2 s, or F8, switch by hand either way.)");
+        AutoAds = Config.Bind("Controls", "AutoAds", false,
+            "With the Touch controllers: raise the gun to your face (right controller near your eyes, pointing where you " +
+            "look) and the game aims down the sights, as if the Aim button were held; lower it and it stops. The Aim " +
+            "button still works too.");
+        AutoAdsDistance = Config.Bind("Controls", "AutoAdsDistance", 0.4f,
+            "Auto-ADS: how close the right controller has to come to your eyes, in metres. Bigger = aims sooner.");
+        AutoAdsAngle = Config.Bind("Controls", "AutoAdsAngle", 35f,
+            "Auto-ADS: how far (degrees) the controller may point away from where you look and still aim.");
+        HandAimNoSway = Config.Bind("Controls", "HandAimNoSway", false,
+            "With the Touch controllers: switch off the game's weapon sway (the gun swinging on springs as the view moves, " +
+            "and bobbing as you walk) while you aim with your hand. Off by default: the same script also brings the gun " +
+            "in towards the eye, so turning it off left the gun sitting too far away.");
+        HandAimSmoothing = Config.Bind("Controls", "HandAimSmoothing", true,
+            "With the Touch controllers: smooth the hand aim, so the small shake of a hand held out doesn't make the gun " +
+            "float about, while a deliberate swing still follows straight away.");
+        HandAimMinCutoff = Config.Bind("Controls", "HandAimMinCutoff", 1.2f,
+            "How hard the hand aim is smoothed when your hand is nearly still: lower = steadier but a touch slower to " +
+            "settle (0.5 to 3; 1.2 by default).");
+        HandAimBeta = Config.Bind("Controls", "HandAimBeta", 0.05f,
+            "How quickly the smoothing lets go as your hand moves faster: higher = less lag on quick swings, but a bit " +
+            "more shake comes through (0 to 0.3; 0.05 by default).");
         Haptics = Config.Bind("Controls", "Haptics", true,
             "With the Touch controllers: the controllers vibrate when you fire, and give short buzzes as feedback (the " +
             "virtual stock on or off, a double tap recognised, Interact sent).");
@@ -302,7 +350,7 @@ public class Plugin : BasePlugin
             "How strong the kick in the right controller is for each shot (0 = none, 1 = strongest).");
         HapticsBothHands = Config.Bind("Controls", "HapticsBothHands", true,
             "The left controller feels each shot too (a little lighter than the right).");
-        HeadLean = Config.Bind("Controls", "HeadLean", true,
+        HeadLean = Config.Bind("Controls", "HeadLean", false,
             "With the Touch controllers: tilt your head to the side past HeadLeanAngle to lean that way (the game's Lean " +
             "Left / Lean Right); straighten your head to stand up straight again.");
         MagLabelHeight = Config.Bind("Controls", "MagLabelHeight", 0.04f,
@@ -345,6 +393,9 @@ public class Plugin : BasePlugin
             "How big the status display and compass look (1 = the first version's size).");
         WeaponPicture = Config.Bind("Menus", "WeaponPicture", true,
             "In the status display, show a small copy of the weapon in your hand, side on, to the left of its name.");
+        WeaponPictureBrightness = Config.Bind("Menus", "WeaponPictureBrightness", 1.3f,
+            "How much brighter the weapon picture's colours are than the real gun's (1 = the same, 1.3 = 30% brighter; " +
+            "0.5 to 3). Gun finishes are dark, so the small copy was hard to make out.");
         TalkIndicator = Config.Bind("Menus", "TalkIndicator", true,
             "Show a red 'TALKING' in the status display while push-to-talk is held.");
         RecenterOnLoad = Config.Bind("Head", "RecenterOnLoad", true,
@@ -418,6 +469,19 @@ public class Plugin : BasePlugin
         CustomisationScreen = Config.Bind("Menus", "CustomisationScreen", true,
             "On the character customisation page in VR, show the game's flat view of your character behind the panels, " +
             "so the floating page looks like the flat screen.");
+        SunShadowFrames = Config.Bind("Rendering", "SunShadowFrames", 0,
+            "Experimental, leave at 0: the sun's shadows drawn once and shared by both eyes, redrawn every this many " +
+            "frames. Tried at 2 (2026-11-05): the gun, hands and nearby ground flickered and the GPU saved nothing. " +
+            "0 = the game's way.");
+        CheapScopes = Config.Bind("Rendering", "CheapScopes", true,
+            "In VR a scope's picture skips the effects you can't see in a small lens (the same ones the eyes skip, plus " +
+            "ambient occlusion and decals), so aiming costs less.");
+        Character3D = Config.Bind("Menus", "Character3D", true,
+            "On the customisation page in VR, show your character on the left as a 3D model (a copy in his current " +
+            "clothes and pose, turned as the game shows him) instead of a flat picture. The right side stays flat.");
+        Character3DCloser = Config.Bind("Menus", "Character3DCloser", -0.1f,
+            "How far (metres) the 3D character is brought towards you from the page. Bigger = closer (and so bigger); " +
+            "below 0 = further back behind the page's front.");
         Diagnostics = Config.Bind("General", "Diagnostics", false,
             "Extra test tools used while building the mod (menu/laptop/interaction logging, the unused virtual gamepad). " +
             "Off for speed. Takes effect at the next game start.");
@@ -432,9 +496,10 @@ public class Plugin : BasePlugin
             "and dynamic resolution are switched off in VR, as they were suspected of stale pictures early on.");
         DlssPercent = Config.Bind("Rendering", "DlssPercent", 67f,
             "With AllowDLSS: the resolution DLSS draws at before upscaling, in percent (33 to 100).");
-        FoveatedRendering = Config.Bind("Rendering", "FoveatedRendering", 1f,
-            "Fixed foveated rendering strength in VR, 0 (off) to 1 (strongest): full detail in the middle of each lens, " +
-            "less towards the edges. Uses Unity's own switch; it may have no effect through SteamVR (the log says).");
+        FoveatedRendering = Config.Bind("Rendering", "FoveatedRendering", 0.5f,
+            "Fixed foveated rendering in VR (NVIDIA cards, through the driver's variable rate shading): full detail in the " +
+            "middle of each lens, coarser towards the edges, to save graphics card time. 0 = off, 0.5 = medium, " +
+            "1 = strongest (smallest sharp area). Takes effect on the next F8.");
         NightVisionFill = Config.Bind("Rendering", "NightVisionFill", true,
             "In VR, while your night-vision goggles are on, make their picture fill your view (the goggles follow your " +
             "head, their lenses are enlarged and the housing hidden). Off = the game's own small tubes in front of you.");
@@ -448,6 +513,14 @@ public class Plugin : BasePlugin
         DarkMagnifierAside = Config.Bind("Rendering", "DarkMagnifierAside", true,
             "In VR, a flip-up magnifier flipped aside doesn't draw its lens, so its magnified picture doesn't catch " +
             "your eye; it shows again when flipped up.");
+        KeepMagnifierLive = Config.Bind("Rendering", "KeepMagnifierLive", true,
+            "In VR, a flip-up magnifier that is up keeps a live picture even when you're not aiming down the sights " +
+            "(the game stops drawing it then, and the lens showed a frozen picture). Also keeps a fixed scope (ACOG...) " +
+            "on the gun in hand live while you're not aimed in.");
+        ScopeAsideFrames = Config.Bind("Rendering", "ScopeAsideFrames", 0,
+            "While you're not aimed in: 0 = the scope's lens is dark and nothing extra is drawn (fastest; you see " +
+            "through it once you lift it to your eye); 1 or more = its picture is redrawn every this many frames " +
+            "(1 = every frame, costs the most; 3 = a third of that). Aimed in, the game draws it every frame as usual.");
         FlipWithSightSwitch = Config.Bind("Controls", "FlipWithSightSwitch", true,
             "The switch-sights key (Caps Lock, D-pad up on the PS5 layout) also flips a flip-up magnifier, which has its " +
             "own key in the game.");
@@ -573,6 +646,9 @@ public class Plugin : BasePlugin
         // Controller vibration: each shot, and short buzzes as feedback
         AddComponent<Haptics>();
 
+        // Touch controllers <-> PS5 pad while playing: both thumbsticks held 2 s, or F8
+        AddComponent<ControlSwitch>();
+
         // With a gamepad, the game's up/down aim follows the head
         AddComponent<HeadAim>();
 
@@ -585,6 +661,7 @@ public class Plugin : BasePlugin
 
         // Magnified scopes and magnifiers kept sharp in VR
         AddComponent<ScopeSharp>();
+        AddComponent<MagnifierLive>();
         AddComponent<OperatorVR.ScopeGuard>();
         AddComponent<MagLabel>();
         AddComponent<GrenadeLabel>();
@@ -615,6 +692,9 @@ public class Plugin : BasePlugin
         // Temporary: logs the XR passes HDRP builds per eye (right eye stuck in some levels)
         XRPassLog.Apply(harmony);
         ExtraCameras.Apply(harmony);
+
+        // Foveated rendering through NVIDIA's variable rate shading, per eye
+        NvFoveation.Apply(harmony);
 
         // Interactables are found from where you look, not where the hand-aimed gun points
         GazeInteraction.Apply(harmony);
