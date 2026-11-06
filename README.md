@@ -122,6 +122,12 @@ Version 1.1.0 adds full motion controls for **Oculus/Meta Touch controllers**. T
 
 Every button can be remapped (`TouchMap`, `TouchDoubleTap`, `TouchHold`), and each setting is explained in the settings file.
 
+## What's new in 1.2.1
+
+- **All scopes go black when lowered** and show their magnified picture when you lift them to your eye: fixed scopes like the ACOG, the game's other scope type, and flip-up magnifiers (a magnifier no longer shows a soft, low-detail picture while flipped up but not aimed, which also cost about 6 fps).
+- **The main weapon bench opens by itself** when you walk up to it and face it (`BenchAutoOpen`, `BenchAutoOpenAt`). The other tables open with Interact as usual.
+- **Smoother:** fewer small hitches. Scopes, magnifiers and the mission screen no longer search the whole level every second, and a rendering error the game logs every frame while you aim no longer costs main-thread time.
+
 ## What's new in 1.2.0
 
 - **Speed:** foveated rendering through the NVIDIA driver (`FoveatedRendering`, 0 = off, 0.5 = medium). On the test PC the graphics card time per frame dropped from 18–20 ms to about 16–17 ms, enough for a steady 45 fps at 90 Hz (it was 40 at 80 Hz).
