@@ -536,9 +536,15 @@ public class MissionScreen : MonoBehaviour
     [Il2CppInterop.Runtime.Attributes.HideFromIl2Cpp]
     private MissionLaptop NearestLaptop(Vector3 eye)
     {
-        if (Time.unscaledTime >= _nextLaptopScan)
+        // Laptops don't come and go within a level: search again after 10 s once some were found (or a level change
+        // removed them), every second while there are none. It searched the whole level every second (2026-11-06)
+        var gone = _laptops.Count == 0;
+        foreach (var l in _laptops)
+            if (l == null)
+                gone = true;
+        if (Time.unscaledTime >= _nextLaptopScan || (gone && Time.unscaledTime >= _nextLaptopScan - 9f))
         {
-            _nextLaptopScan = Time.unscaledTime + 1f;
+            _nextLaptopScan = Time.unscaledTime + 10f;
             _laptops.Clear();
             foreach (var o in UnityEngine.Object.FindObjectsByType(Il2CppType.Of<MissionLaptop>(), FindObjectsSortMode.None))
             {

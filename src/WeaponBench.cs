@@ -134,11 +134,222 @@ public class WeaponBench : MonoBehaviour
     // adds the right stick's left/right here (degrees), and it's added to the turner's own turn
     internal static bool Open { get; private set; }
     internal static float SpinInput;
+
+    // ---- Open by walking up to it (Menus.BenchAutoOpen) ----
+    // "Can the weapon bench be open all the time, so when you walk up to it you don't have to click open?"
+    // (2026-11-06). The bench is the game's WeaponModding; Interact on it runs its CallForModding (StartModding as a
+    // second try). Within BenchAutoOpenDistance of it and facing it, that's called for you. After you leave the page
+    // it doesn't open again until you've stepped away (1 m further) and come back, so closing it isn't undone
+    private readonly List<WeaponModding> _benches = new();
+    private float _nextBenchFind, _nextAutoCheck, _triedAt = -10f;
+    private bool _autoArmed = true, _wasOpen;
+    private int _autoLogs;
+    private string _benchesLoggedFor;
+
+    private void AutoOpen()
+    {
+        var dist = Plugin.BenchAutoOpenDistance.Value;
+        if (!OpenXRBootstrap.IsRunning || !Plugin.BenchAutoOpen.Value || dist <= 0f)
+            return;
+        if (_wasOpen && !Open)
+            _autoArmed = false;   // just left the page: wait until you've stepped away
+        _wasOpen = Open;
+        if (Open || Time.unscaledTime < _nextAutoCheck)
+            return;
+        _nextAutoCheck = Time.unscaledTime + 0.25f;
+        if (MissionScreen.HasControl || CustomisationScreen.Open)
+            return;
+
+        // Searched once per scene (every 5 s until found): searching the whole Operation Room every 3 s for the tables
+        // and the laptop was a likely source of the stutter there (2026-11-06)
+        var sceneNow = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
+        if (sceneNow != _benchScene)
+        {
+            _benchScene = sceneNow;
+            _benches.Clear();
+            _nextBenchFind = 0f;
+        }
+        if ((_benches.Count == 0 || _benches[0] == null) && Time.unscaledTime >= _nextBenchFind)
+        {
+            _nextBenchFind = Time.unscaledTime + 5f;
+            _benches.Clear();
+            var all = new List<WeaponModding>();
+            foreach (var o in UnityEngine.Object.FindObjectsByType(Il2CppType.Of<WeaponModding>(), FindObjectsSortMode.None))
+            {
+                var b = o.TryCast<WeaponModding>();
+                if (b != null && b.isActiveAndEnabled)
+                    all.Add(b);
+            }
+            // Only the main bench ("right at the top near the big screen; the rest open normally", 2026-11-06: the
+            // Operation Room has 15 weapon tables and the first try opened whichever you walked past). Named in
+            // Menus.BenchAutoOpenName, or else the table nearest the mission laptop (where the big screen is)
+            var main = MainBench(all);
+            if (main != null)
+                _benches.Add(main);
+        }
+        var cam = Camera.main;
+        if (cam == null || _benches.Count == 0)
+            return;
+        var eye = cam.transform.position;
+        var scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
+        if (scene != _benchesLoggedFor)
+        {
+            _benchesLoggedFor = scene;
+            Plugin.Logger.LogInfo($"[Bench] Benches in '{scene}': " + string.Join(", ", _benches.ConvertAll(b =>
+                b == null ? "-" : $"'{LaptopDiagnostics.Path(b.transform)}' {Vector3.Distance(eye, b.transform.position):0.0} m from you")));
+        }
+        WeaponModding near = null;
+        var best = float.MaxValue;
+        foreach (var b in _benches)
+        {
+            if (b == null)
+                continue;
+            var to = b.transform.position - eye;
+            to.y = 0f;
+            var d = to.magnitude;
+            if (d < best)
+            {
+                best = d;
+                near = b;
+            }
+        }
+        if (near == null)
+            return;
+        if (!_autoArmed)
+        {
+            if (best > dist + 1f)
+                _autoArmed = true;
+            return;
+        }
+        if (best > dist)
+            return;
+        // Facing it (within ~60° left/right), not walking past with it behind you
+        var fwd = cam.transform.forward;
+        fwd.y = 0f;
+        var dir = near.transform.position - eye;
+        dir.y = 0f;
+        if (fwd.sqrMagnitude < 1e-4f || dir.sqrMagnitude < 1e-4f || Vector3.Dot(fwd.normalized, dir.normalized) < 0.5f)
+            return;
+        // One try every 2 s at most
+        if (Time.unscaledTime - _triedAt < 2f)
+            return;
+        _triedAt = Time.unscaledTime;
+        // StartModding is what opened it (log 2026-11-06: CallForModding did nothing; StartModding opened the page)
+        near.StartModding();
+        if (_autoLogs++ < 20)
+            Plugin.Logger.LogInfo($"[Bench] Walked up to the main bench '{near.name}' ({best:0.0} m): opened it");
+    }
+
+    private string _mainLoggedFor, _benchScene;
+
+    private static bool TryParseXZ(string s, out Vector2 v)
+    {
+        v = default;
+        if (string.IsNullOrWhiteSpace(s))
+            return false;
+        var parts = s.Split(',');
+        if (parts.Length != 2)
+            return false;
+        var ci = System.Globalization.CultureInfo.InvariantCulture;
+        if (!float.TryParse(parts[0].Trim(), System.Globalization.NumberStyles.Float, ci, out var x) ||
+            !float.TryParse(parts[1].Trim(), System.Globalization.NumberStyles.Float, ci, out var z))
+            return false;
+        v = new Vector2(x, z);
+        return true;
+    }
+
+    [Il2CppInterop.Runtime.Attributes.HideFromIl2Cpp]
+    private WeaponModding MainBench(List<WeaponModding> all)
+    {
+        if (all.Count == 0)
+            return null;
+        var scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
+        WeaponModding pick = null;
+        string why;
+        var wanted = Plugin.BenchAutoOpenName.Value?.Trim();
+        if (!string.IsNullOrEmpty(wanted))
+        {
+            foreach (var b in all)
+                if (b != null && LaptopDiagnostics.Path(b.transform).EndsWith(wanted, StringComparison.OrdinalIgnoreCase))
+                {
+                    pick = b;
+                    break;
+                }
+            why = pick != null ? $"named in BenchAutoOpenName ('{wanted}')" : $"no table named '{wanted}'";
+        }
+        else if (TryParseXZ(Plugin.BenchAutoOpenAt.Value, out var at))
+        {
+            // The table nearest a spot in the room: the main bench is where the user's gun sat when they opened it with
+            // Interact (log 2026-11-06: weapon middle (-17.46, 1.44, -14.98) both times); the table nearest the mission
+            // laptop was another one, (6), 7 m away from it
+            var best = float.MaxValue;
+            foreach (var b in all)
+            {
+                if (b == null)
+                    continue;
+                var p = b.transform.position;
+                var d = new Vector2(p.x - at.x, p.z - at.y).magnitude;
+                if (d < best)
+                {
+                    best = d;
+                    pick = b;
+                }
+            }
+            why = $"nearest the spot {at.x:0.0}, {at.y:0.0} (BenchAutoOpenAt; {best:0.0} m from it)";
+            if (best > 4f)
+            {
+                pick = null;
+                why += ": too far, so none here";
+            }
+        }
+        else
+        {
+            Transform laptop = null;
+            foreach (var o in UnityEngine.Object.FindObjectsByType(Il2CppType.Of<MissionLaptop>(), FindObjectsSortMode.None))
+            {
+                var l = o.TryCast<MissionLaptop>();
+                if (l != null)
+                {
+                    laptop = l.transform;
+                    break;
+                }
+            }
+            var best = float.MaxValue;
+            if (laptop != null)
+                foreach (var b in all)
+                {
+                    if (b == null)
+                        continue;
+                    var d = Vector3.Distance(b.transform.position, laptop.position);
+                    if (d < best)
+                    {
+                        best = d;
+                        pick = b;
+                    }
+                }
+            why = laptop != null ? $"nearest the mission laptop ({best:0.0} m from it)" : "no mission laptop in this scene";
+        }
+        if (scene != _mainLoggedFor)
+        {
+            _mainLoggedFor = scene;
+            Plugin.Logger.LogInfo($"[Bench] Opens by itself in '{scene}': " +
+                                  (pick != null ? $"'{LaptopDiagnostics.Path(pick.transform)}' at {pick.transform.position}, {why}" : $"none ({why})") +
+                                  $"; {all.Count} tables in all, the others open with Interact as usual");
+        }
+        return pick;
+    }
     private bool _spinLogged;
 
     private void LateUpdate()
     {
         Open = OpenXRBootstrap.IsRunning && PageCanvas() != null;
+        try { AutoOpen(); }
+        catch (Exception e)
+        {
+            if (_autoLogs++ < 10)
+                Plugin.Logger.LogError($"[Bench] auto open: {e.GetType().Name}: {e.Message}");
+            _nextAutoCheck = Time.unscaledTime + 5f;
+        }
         try
         {
             if (Open && _turner == null && Mathf.Abs(SpinInput) > 0f && !_spinLogged)

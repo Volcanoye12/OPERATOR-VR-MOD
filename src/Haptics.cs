@@ -157,8 +157,10 @@ public class Haptics : MonoBehaviour
             _laserKeyDown = false;
             TouchKeys.PressKey(KeyCode.Mouse4, false);
         }
-        // (The laser callout rides on the same watch, so this runs with vibration off too; Pulse checks Haptics)
-        if (!OpenXRBootstrap.IsRunning || !Plugin.TouchControls.Value)
+        // (The laser callout and the spoken laser command ride on the same watch, so this runs with vibration off and
+        // on the PS5 pad too; Pulse checks Haptics and TouchControls. It needed Touch before, so "laser off" was heard
+        // and then ignored on the pad, 2026-11-06)
+        if (!OpenXRBootstrap.IsRunning)
         {
             _rounds = -1;
             return;
@@ -191,7 +193,7 @@ public class Haptics : MonoBehaviour
             }
             var rounds = mag.ammoAmount + (weapon.roundInChamber ? 1 : 0);
             var same = weapon.Pointer == _weapon && mag.Pointer == _mag && _rounds >= 0;
-            if (same && rounds < _rounds && Plugin.HapticsShot.Value > 0f)
+            if (same && rounds < _rounds && Plugin.HapticsShot.Value > 0f && Plugin.TouchControls.Value)
             {
                 var k = Plugin.HapticsShot.Value;
                 Pulse(XRNode.RightHand, k, 0.06f);

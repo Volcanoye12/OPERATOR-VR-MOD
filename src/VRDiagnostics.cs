@@ -307,6 +307,9 @@ public class VRDiagnostics : MonoBehaviour
     // Same message repeated every frame would flood the log: count repeats, log the first few in full
     private static readonly System.Collections.Generic.Dictionary<string, int> s_unitySeen = new();
 
+    private static readonly System.Collections.Generic.HashSet<LogType> s_stacksOff = new();
+    private static string Shorten(string s) => s == null ? "" : s.Length <= 60 ? s : s.Substring(0, 60) + "...";
+
     private static void OnUnityLog(string message, string stackTrace, LogType type)
     {
         try
@@ -316,6 +319,20 @@ public class VRDiagnostics : MonoBehaviour
             var key = type + message;
             s_unitySeen.TryGetValue(key, out var n);
             s_unitySeen[key] = ++n;
+            // A message repeating every frame (the scope camera's "Dimensions of color surface ..." about once a frame
+            // while aimed, thousands a session) made Unity collect a call stack each time, on the main thread, right
+            // while aiming (2026-11-06). After 50 repeats of anything, Unity stops collecting stacks for that kind of
+            // message; the first ones above still show where they came from
+            if (n == 50 && (type == LogType.Error || type == LogType.Warning) && !s_stacksOff.Contains(type))
+            {
+                s_stacksOff.Add(type);
+                try
+                {
+                    Application.SetStackTraceLogType(type, StackTraceLogType.None);
+                    Plugin.Logger.LogInfo($"[Unity] '{Shorten(message)}' repeats every frame: Unity {type} lines no longer collect call stacks (saves main-thread time)");
+                }
+                catch { }
+            }
             if (n > 3 && n % 500 != 0)
                 return;
             var firstFrames = string.Join(" | ", (stackTrace ?? "").Split('\n', StringSplitOptions.RemoveEmptyEntries).Take(4));

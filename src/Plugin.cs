@@ -10,7 +10,7 @@ public class Plugin : BasePlugin
 {
     public const string Guid = "com.operatorvr.mod";
     public const string Name = "OperatorVR";
-    public const string Version = "1.2.0";
+    public const string Version = "1.2.1";
 
     internal static ManualLogSource Logger;
     internal static ConfigEntry<OpenXRNative.RenderMode> StereoRenderMode;
@@ -32,7 +32,9 @@ public class Plugin : BasePlugin
     internal static ConfigEntry<bool> HeadAimPitch;
     internal static ConfigEntry<bool> SteadyEyeHeight, LockEyeWhenAiming, ExactMagCount;
     internal static ConfigEntry<string> RecenterKey;
-    internal static ConfigEntry<bool> CustomisationScreen, Character3D, CheapScopes;
+    internal static ConfigEntry<bool> CustomisationScreen, Character3D, CheapScopes, BenchAutoOpen;
+    internal static ConfigEntry<float> BenchAutoOpenDistance;
+    internal static ConfigEntry<string> BenchAutoOpenName, BenchAutoOpenAt;
     internal static ConfigEntry<int> SunShadowFrames;
     internal static ConfigEntry<bool> WeaponBenchOnTop;
     internal static ConfigEntry<float> BenchGunSize;
@@ -546,6 +548,17 @@ public class Plugin : BasePlugin
         BenchWeaponForward = Config.Bind("Menus", "BenchWeaponForward", 0.3f,
             "In VR, while the weapon bench page is open, the weapon is moved this many metres out from the wall towards " +
             "you so it can be turned without going through the wall (0 = where the game puts it; up to 0.6).");
+        BenchAutoOpen = Config.Bind("Menus", "BenchAutoOpen", true,
+            "In VR the armoury's weapon bench opens by itself when you walk up to it and face it (no Interact press). " +
+            "After you leave it, step away and come back to open it again.");
+        BenchAutoOpenDistance = Config.Bind("Menus", "BenchAutoOpenDistance", 1.5f,
+            "How close (metres) you need to be to the weapon bench for it to open by itself.");
+        BenchAutoOpenName = Config.Bind("Menus", "BenchAutoOpenName", "",
+            "Which weapon table opens by itself (the end of its name as the log lists it, e.g. 'WeaponModdingTable (8)'). " +
+            "Empty = the table nearest BenchAutoOpenAt; the others open with Interact.");
+        BenchAutoOpenAt = Config.Bind("Menus", "BenchAutoOpenAt", "-17.5, -15.0",
+            "With BenchAutoOpenName empty: the weapon table nearest this spot in the room (x, z in metres) opens by itself. " +
+            "The default is the main bench in the Operation Room. Empty = the table nearest the mission laptop.");
         WeaponBenchOnTop = Config.Bind("Menus", "WeaponBenchOnTop", true,
             "At the armoury bench in VR, draw the weapon modding list on top of everything, so the table can't hide " +
             "the bottom of it.");

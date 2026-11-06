@@ -88,6 +88,9 @@ public class MagnifierLive : MonoBehaviour
             foreach (var sc in _gunScopes)
                 if (sc != null)
                     KeepScope(sc);
+            foreach (var r in _realScopes)
+                if (r != null)
+                    KeepRealScope(r);
             Report();
         }
         catch (Exception e)
@@ -100,12 +103,12 @@ public class MagnifierLive : MonoBehaviour
     private void FindMagnifiers()
     {
         _flips.Clear();
-        foreach (var o in UnityEngine.Object.FindObjectsByType(Il2CppType.Of<FlipSights>(), FindObjectsSortMode.None))
-        {
-            var f = o.TryCast<FlipSights>();
-            if (f != null && f.transform.root.name.Contains("MyPlayer"))
-                _flips.Add(f);
-        }
+        // Under the player only (was a whole-level search every second)
+        var me = LocalPlayer.Get();
+        if (me != null)
+            foreach (var f in me.GetComponentsInChildren<FlipSights>(false))
+                if (f != null)
+                    _flips.Add(f);
         FindGunScopes();
     }
 
@@ -129,7 +132,10 @@ public class MagnifierLive : MonoBehaviour
     private bool _blackLogged;
 
     [Il2CppInterop.Runtime.Attributes.HideFromIl2Cpp]
-    private Material Black(UltimateScopes.ScopeController sc)
+    private Material Black(UltimateScopes.ScopeController sc) => Black(sc.transform, sc.LensRenderer);
+
+    [Il2CppInterop.Runtime.Attributes.HideFromIl2Cpp]
+    private Material Black(Transform scope, Renderer lensRenderer)
     {
         if (_black != null)
             return _black;
@@ -143,10 +149,10 @@ public class MagnifierLive : MonoBehaviour
         }
         else
         {
-            var root = sc.transform.parent != null ? sc.transform.parent : sc.transform;
+            var root = scope.parent != null ? scope.parent : scope;
             foreach (var r in root.GetComponentsInChildren<Renderer>(true))
             {
-                if (r == null || r.Pointer == sc.LensRenderer?.Pointer || r.sharedMaterial == null || !r.sharedMaterial.HasProperty("_BaseColor"))
+                if (r == null || r.Pointer == lensRenderer?.Pointer || r.sharedMaterial == null || !r.sharedMaterial.HasProperty("_BaseColor"))
                     continue;
                 _black = new Material(r.sharedMaterial) { name = "OperatorVR black lens" };
                 _black.SetColor("_BaseColor", Color.black);
@@ -167,9 +173,11 @@ public class MagnifierLive : MonoBehaviour
 
     /// <summary>Shows the scope's picture, or blacks the lens out; true if that changed anything.</summary>
     [Il2CppInterop.Runtime.Attributes.HideFromIl2Cpp]
-    private bool LensOn(UltimateScopes.ScopeController sc, bool on)
+    private bool LensOn(UltimateScopes.ScopeController sc, bool on) => LensOn(sc.LensRenderer, sc.transform, on);
+
+    [Il2CppInterop.Runtime.Attributes.HideFromIl2Cpp]
+    private bool LensOn(Renderer lens, Transform scope, bool on)
     {
-        var lens = sc.LensRenderer;
         if (lens == null)
             return false;
         var dark = _darkLenses.TryGetValue(lens.Pointer, out var entry);
@@ -191,7 +199,7 @@ public class MagnifierLive : MonoBehaviour
             return true;
         }
         var own = lens.sharedMaterials;
-        var black = Black(sc);
+        var black = Black(scope, lens);
         if (black == null)
             lens.forceRenderingOff = true;
         else
@@ -229,6 +237,7 @@ public class MagnifierLive : MonoBehaviour
     private void FindGunScopes()
     {
         _gunScopes.Clear();
+        _realScopes.Clear();
         try { FindGunScopesInHand(); }
         finally
         {
@@ -237,6 +246,20 @@ public class MagnifierLive : MonoBehaviour
             foreach (var sc in _gunScopes)
                 if (sc != null && sc.LensRenderer != null)
                     keep.Add(sc.LensRenderer.Pointer);
+            foreach (var r in _realScopes)
+            {
+                Renderer mr = null;
+                try { mr = r != null ? r._mr : null; } catch { }
+                if (mr != null)
+                    keep.Add(mr.Pointer);
+            }
+            // ...and the magnifiers on the player, whose lens is blacked out by Keep while not aimed
+            foreach (var f in _flips)
+            {
+                var msc = f != null ? f.GetComponentInChildren<UltimateScopes.ScopeController>(true) : null;
+                if (msc != null && msc.LensRenderer != null)
+                    keep.Add(msc.LensRenderer.Pointer);
+            }
             var back = new List<IntPtr>();
             foreach (var kv in _darkLenses)
                 if (!keep.Contains(kv.Key))
@@ -251,22 +274,42 @@ public class MagnifierLive : MonoBehaviour
 
     private void FindGunScopesInHand()
     {
-        if (_me == null)
-            foreach (var o in UnityEngine.Object.FindObjectsByType(Il2CppType.Of<PlayerNetworking>(), FindObjectsSortMode.None))
-            {
-                var p = o.TryCast<PlayerNetworking>();
-                if (p != null && p.gameObject.name.Contains("MyPlayer"))
-                {
-                    _me = p;
-                    break;
-                }
-            }
+        _me = LocalPlayer.Get();
         var gun = _me != null ? _me.activeWeapon : null;
         if (gun == null)
             return;
         foreach (var sc in gun.GetComponentsInChildren<UltimateScopes.ScopeController>(false))
             if (sc != null && sc.GetComponentInParent<FlipSights>() == null)   // magnifiers are handled above
                 _gunScopes.Add(sc);
+        foreach (var r in gun.GetComponentsInChildren<RealisticScopeEffectV2>(false))
+            if (r != null && r.GetComponentInParent<FlipSights>() == null &&
+                r.GetComponentInChildren<UltimateScopes.ScopeController>(true) == null &&
+                r.GetComponentInParent<UltimateScopes.ScopeController>() == null)   // those are handled as the ACOG kind
+                _realScopes.Add(r);
+    }
+
+    // ---- The game's other scope kind (RealisticScopeEffectV2) ----
+    // "Shall we make it for all scopes that until you put it to your eye they're all black?" (2026-11-06). The ACOG
+    // kind (UltimateScopes) and the flip-up magnifier already were; scopes of this kind draw onto their lens (_mr) the
+    // same way. Not aimed (the game's isADS), the lens is black; aimed, the game's own picture. Rendering.ScopeAsideFrames 0
+    private readonly List<RealisticScopeEffectV2> _realScopes = new();
+
+    [Il2CppInterop.Runtime.Attributes.HideFromIl2Cpp]
+    private void KeepRealScope(RealisticScopeEffectV2 r)
+    {
+        Renderer lens = null;
+        try { lens = r._mr; } catch { }
+        if (lens == null || !r.gameObject.activeInHierarchy)
+            return;
+        if (Plugin.ScopeAsideFrames.Value > 0)
+        {
+            LensOn(lens, r.transform, true);
+            return;
+        }
+        var ads = false;
+        try { ads = _me != null && _me.isADS; } catch { }
+        if (LensOn(lens, r.transform, ads) && !ads && _logs++ < 40)
+            Plugin.Logger.LogInfo($"[Scope] '{r.name}' not aimed: lens dark until you aim in");
     }
 
     [Il2CppInterop.Runtime.Attributes.HideFromIl2Cpp]
@@ -329,10 +372,32 @@ public class MagnifierLive : MonoBehaviour
         if (cam == null || cam.targetTexture == null)
             return;
 
-        Watch(sc, cam);
-
         s_lastDrawn.TryGetValue(cam.Pointer, out var last);
         var since = Time.frameCount - last;
+
+        // "Make the magnifier work like the ACOG" (2026-11-06, Afghanistan V2 Day): flipped up but not aimed, the game
+        // stops drawing it and drawing it ourselves gave a soft, low-resolution picture (the game's 512x512 not-aimed
+        // target) and cost ~6 fps. With ScopeAsideFrames 0 its lens is black until you aim; aimed in, the game draws
+        // its own full-resolution picture into the lens as usual. Nothing is re-pointed (that left the lens on the
+        // low-resolution picture after aiming)
+        if (Plugin.ScopeAsideFrames.Value <= 0)
+        {
+            var ads = false;
+            try { ads = _me != null && _me.isADS; } catch { }
+            if (since <= StallFrames || ads)
+            {
+                LensOn(sc, true);
+                if (_drawing)
+                    Stop("aimed in");
+                return;
+            }
+            if (LensOn(sc, false) && _logs++ < 40)
+                Plugin.Logger.LogInfo($"[Magnifier] '{f.name}' up but not aimed: lens dark until you aim in");
+            _drawing = false;
+            return;
+        }
+
+        Watch(sc, cam);
         if (since <= StallFrames)
         {
             if (_drawing)

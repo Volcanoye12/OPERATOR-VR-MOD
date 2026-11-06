@@ -94,10 +94,13 @@ public class ScopeSharp : MonoBehaviour
 
     private void ScopeShadowOff()
     {
-        foreach (var o in UnityEngine.Object.FindObjectsByType(Il2CppType.Of<UltimateScopes.ScopeController>(), FindObjectsSortMode.None))
+        // Under the player only (was a whole-level search every second)
+        var me = LocalPlayer.Get();
+        if (me == null)
+            return;
+        foreach (var sc in me.GetComponentsInChildren<UltimateScopes.ScopeController>(false))
         {
-            var sc = o.TryCast<UltimateScopes.ScopeController>();
-            if (sc == null || !sc.transform.root.name.Contains("MyPlayer"))
+            if (sc == null)
                 continue;
             ShadowOff(sc._scopeMaterial, sc.name);
             if (sc.LensRenderer != null)
@@ -230,10 +233,12 @@ public class ScopeSharp : MonoBehaviour
         _magnifiers.Clear();
         if (!Plugin.DarkMagnifierAside.Value)
             return;
-        foreach (var o in UnityEngine.Object.FindObjectsByType(Il2CppType.Of<FlipSights>(), FindObjectsSortMode.None))
+        var me = LocalPlayer.Get();
+        if (me == null)
+            return;
+        foreach (var f in me.GetComponentsInChildren<FlipSights>(false))
         {
-            var f = o.TryCast<FlipSights>();
-            if (f == null || !f.transform.root.name.Contains("MyPlayer"))
+            if (f == null)
                 continue;
             var sc = f.GetComponentInChildren<UltimateScopes.ScopeController>(true);
             var lens = sc != null ? sc.LensRenderer : null;
@@ -314,10 +319,12 @@ public class ScopeSharp : MonoBehaviour
                 ScopeInputSetter.RenderLowResWhenUnADS = false;
                 Plugin.Logger.LogInfo("[Scope] Scopes no longer drop to low resolution when not aimed (VR)");
             }
-            foreach (var o in UnityEngine.Object.FindObjectsByType(Il2CppType.Of<RealisticScopeEffectV2>(), FindObjectsSortMode.None))
+            var meNow = LocalPlayer.Get();
+            var effects = meNow != null ? meNow.GetComponentsInChildren<RealisticScopeEffectV2>(false) : null;
+            if (effects != null)
+            foreach (var s in effects)
             {
-                var s = o.TryCast<RealisticScopeEffectV2>();
-                if (s == null || !s.isActiveAndEnabled || !s.transform.root.name.Contains("MyPlayer"))
+                if (s == null || !s.isActiveAndEnabled)
                     continue;
                 if (s.UsingLowRes)
                     s.SetHighRes();
