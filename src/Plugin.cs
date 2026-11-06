@@ -10,7 +10,7 @@ public class Plugin : BasePlugin
 {
     public const string Guid = "com.operatorvr.mod";
     public const string Name = "OperatorVR";
-    public const string Version = "1.2.1";
+    public const string Version = "1.2.2";
 
     internal static ManualLogSource Logger;
     internal static ConfigEntry<OpenXRNative.RenderMode> StereoRenderMode;
@@ -33,7 +33,8 @@ public class Plugin : BasePlugin
     internal static ConfigEntry<bool> SteadyEyeHeight, LockEyeWhenAiming, ExactMagCount;
     internal static ConfigEntry<string> RecenterKey;
     internal static ConfigEntry<bool> CustomisationScreen, Character3D, CheapScopes, BenchAutoOpen;
-    internal static ConfigEntry<float> BenchAutoOpenDistance;
+    internal static ConfigEntry<float> BenchAutoOpenDistance, AutoHoldBreathSeconds;
+    internal static ConfigEntry<bool> AutoHoldBreath;
     internal static ConfigEntry<string> BenchAutoOpenName, BenchAutoOpenAt;
     internal static ConfigEntry<int> SunShadowFrames;
     internal static ConfigEntry<bool> WeaponBenchOnTop;
@@ -515,6 +516,12 @@ public class Plugin : BasePlugin
         DarkMagnifierAside = Config.Bind("Rendering", "DarkMagnifierAside", true,
             "In VR, a flip-up magnifier flipped aside doesn't draw its lens, so its magnified picture doesn't catch " +
             "your eye; it shows again when flipped up.");
+        AutoHoldBreath = Config.Bind("Controls", "AutoHoldBreath", true,
+            "In VR, hold your breath automatically while you're aimed down the sights (the game's Hold Breath key, " +
+            "Left Alt), and let go when you stop aiming. Works with the Touch controllers and the PS5 pad.");
+        AutoHoldBreathSeconds = Config.Bind("Controls", "AutoHoldBreathSeconds", 0f,
+            "With AutoHoldBreath: let go after this many seconds of one aim (0 = as long as you aim; the game still " +
+            "decides how long a breath can last).");
         KeepMagnifierLive = Config.Bind("Rendering", "KeepMagnifierLive", true,
             "In VR, a flip-up magnifier that is up keeps a live picture even when you're not aiming down the sights " +
             "(the game stops drawing it then, and the lens showed a frozen picture). Also keeps a fixed scope (ACOG...) " +
@@ -675,6 +682,7 @@ public class Plugin : BasePlugin
         // Magnified scopes and magnifiers kept sharp in VR
         AddComponent<ScopeSharp>();
         AddComponent<MagnifierLive>();
+        AddComponent<AutoHoldBreath>();
         AddComponent<OperatorVR.ScopeGuard>();
         AddComponent<MagLabel>();
         AddComponent<GrenadeLabel>();

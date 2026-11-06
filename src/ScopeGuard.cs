@@ -67,12 +67,13 @@ public class ScopeGuard : MonoBehaviour
             {
                 _switchTries = 0;
                 _camsOffSeen = IntPtr.Zero;
-                _nextCheck = Time.unscaledTime + 0.4f;   // once the game has settled on a sight
+                _nextCheck = Time.unscaledTime + 0.2f;   // once the game has settled on a sight (was 0.4 s; with 0.5 s between
+                                                         // checks a wrong sight took ~1.4 s to fix: "froze for a second", 2026-11-06)
             }
             _aimWas = aiming;
             if (!aiming || Time.unscaledTime < _nextCheck)
                 return;
-            _nextCheck = Time.unscaledTime + 0.5f;
+            _nextCheck = Time.unscaledTime + 0.25f;
             Check();
         }
         catch (Exception e)

@@ -331,13 +331,15 @@ public class MagnifierLive : MonoBehaviour
         // "When the ACOG is at your side, make it black; only when you lift it to your head can you see through it"
         // (2026-11-05, 120 Hz test: drawing it at the side cost 1.3-2.2 ms a frame). ScopeAsideFrames 0: the lens
         // isn't drawn at all while you're not aimed in, so it shows dark, and nothing extra is drawn
-        // Aimed in by the game's own word: lens on, whether or not the camera has drawn yet (in case the scope only
-        // draws while its lens can be seen, which a dark lens would never allow)
+        // Aimed in but the camera isn't drawing yet (the game still on the gun's other sight until ScopeGuard switches
+        // it): the lens stays black rather than showing its last, frozen picture ("the scope froze for a second",
+        // 2026-11-06). The black lens is still drawn (only its material differs), so a scope that draws only while its
+        // lens can be seen still does
         var ads = false;
         try { ads = _me != null && _me.isADS; } catch { }
         if (ads)
         {
-            LensOn(sc, true);
+            LensOn(sc, false);
             return;
         }
         if (Plugin.ScopeAsideFrames.Value <= 0)
@@ -384,7 +386,7 @@ public class MagnifierLive : MonoBehaviour
         {
             var ads = false;
             try { ads = _me != null && _me.isADS; } catch { }
-            if (since <= StallFrames || ads)
+            if (since <= StallFrames)
             {
                 LensOn(sc, true);
                 if (_drawing)
