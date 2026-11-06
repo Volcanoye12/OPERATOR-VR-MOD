@@ -122,6 +122,10 @@ Version 1.1.0 adds full motion controls for **Oculus/Meta Touch controllers**. T
 
 Every button can be remapped (`TouchMap`, `TouchDoubleTap`, `TouchHold`), and each setting is explained in the settings file.
 
+## What's new in 1.2.2
+
+- **You hold your breath automatically when you aim** down the sights.
+
 ## What's new in 1.2.1
 
 - **All scopes go black when lowered** and show their magnified picture when you lift them to your eye: fixed scopes like the ACOG, the game's other scope type, and flip-up magnifiers (a magnifier no longer shows a soft, low-detail picture while flipped up but not aimed, which also cost about 6 fps).
