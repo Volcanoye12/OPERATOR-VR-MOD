@@ -40,6 +40,7 @@ This is an unofficial fan mod. It isn't made by or connected with the developers
 
 1. **Install BepInEx 6 IL2CPP:**
    - Download the "BepInEx Unity (IL2CPP) for Windows x64" bleeding-edge build from [builds.bepinex.dev](https://builds.bepinex.dev/projects/bepinex_be). Build 791 or close to it is fine.
+   - **It must be the x64 version.** OPERATOR is a 64-bit game, so the x86 BepInEx won't load and the mod won't start. If you installed x86 by mistake: delete the `BepInEx` folder and `winhttp.dll` from the game folder, install the x64 build, then add the mod again.
    - Unzip it into the OPERATOR game folder, next to `OPERATOR.exe`. To find that folder: in Steam, right-click OPERATOR, then **Manage → Browse local files**.
    - Start the game once and wait at the main menu. The first start takes a few minutes while BepInEx sets itself up. Then quit.
 2. **Install the mod:**
