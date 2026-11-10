@@ -10,7 +10,7 @@ public class Plugin : BasePlugin
 {
     public const string Guid = "com.operatorvr.mod";
     public const string Name = "OperatorVR";
-    public const string Version = "1.2.2";
+    public const string Version = "1.2.3";
 
     internal static ManualLogSource Logger;
     internal static ConfigEntry<OpenXRNative.RenderMode> StereoRenderMode;
@@ -37,6 +37,7 @@ public class Plugin : BasePlugin
     internal static ConfigEntry<bool> AutoHoldBreath;
     internal static ConfigEntry<string> BenchAutoOpenName, BenchAutoOpenAt;
     internal static ConfigEntry<int> SunShadowFrames;
+    internal static ConfigEntry<bool> GpuAudit, IdleSuppressionOff, GpuSpikeWatch, LookPreview, NoHaze;
     internal static ConfigEntry<bool> WeaponBenchOnTop;
     internal static ConfigEntry<float> BenchGunSize;
     internal static ConfigEntry<float> HealthArrowSize;
@@ -95,8 +96,9 @@ public class Plugin : BasePlugin
     internal static ConfigEntry<bool> UseGamePitch;
     internal static ConfigEntry<bool> FixUpsideDown;
     internal static ConfigEntry<float> MenuDistance;
-    internal static ConfigEntry<float> MenuWidth, TabScreenScale;
-    internal static ConfigEntry<bool> LaptopPanel, MissionScreen, MissionScreenOnWindow;
+    internal static ConfigEntry<float> MenuWidth, TabScreenScale, BenchPageSize, HazeThinning;
+    internal static ConfigEntry<bool> BenchTheme;
+    internal static ConfigEntry<bool> LaptopPanel, MissionScreen, MissionScreenOnWindow, MissionScreenMap;
     internal static ConfigEntry<bool> MenusOnTop;
     internal static ConfigEntry<float> LaptopPanelDistance, MissionScreenMaxWidth, MaxAimUpDown, HideTorsoPitch;
     internal static ConfigEntry<float> LaptopPanelDegrees;
@@ -449,7 +451,8 @@ public class Plugin : BasePlugin
             "When aiming down the sights in VR, line them up with this eye (Right, Left, or Centre = between the eyes, " +
             "as the game does). Use your dominant eye.");
         GunShiftForward = Config.Bind("Controls", "GunShiftForward", 0f,
-            "In VR, move the gun this far forward (negative = back towards you), in metres.");
+            "In VR, move the gun this far forward, away from your face (negative = back towards you), in metres. " +
+            "Ctrl + Shift + Up/Down changes it by 1 cm while playing. Fades out while aiming down the sights.");
         // Off: in Georgia (2026-11-03) the gun drifted off the game's aim line, "kept shooting to my right" and the
         // sights wouldn't come up properly
         SteadyGun = Config.Bind("Controls", "SteadyGun", false,
@@ -476,6 +479,25 @@ public class Plugin : BasePlugin
             "Experimental, leave at 0: the sun's shadows drawn once and shared by both eyes, redrawn every this many " +
             "frames. Tried at 2 (2026-11-05): the gun, hands and nearby ground flickered and the GPU saved nothing. " +
             "0 = the game's way.");
+        IdleSuppressionOff = Config.Bind("Rendering", "IdleSuppressionOff", true,
+            "In VR, skip the game's 'under fire' screen effect while nobody is shooting at you (it was drawn every " +
+            "frame anyway, ~1 ms of graphics time). When you're shot at it shows as before.");
+        GpuSpikeWatch = Config.Bind("Rendering", "GpuSpikeWatch", true,
+            "If the graphics card suddenly gets much slower and stays slow (e.g. 45 -> 5 fps), log what's in view and " +
+            "briefly switch likely features off to find the cause ('[GpuSpike]' lines). Once per game.");
+        NoHaze = Config.Bind("Rendering", "NoHaze", false,
+            "In VR, switch off the game's fog / atmosphere haze completely: distant things look sharp and colours clear, " +
+            "but far trees can shimmer and the draw-distance edge shows. Rendering.HazeThinning is the gentler option.");
+        HazeThinning = Config.Bind("Rendering", "HazeThinning", 4f,
+            "In VR, make the game's haze this many times thinner: near and mid-range look clear and colourful, the far " +
+            "distance stays gently softened (hides shimmering trees and the draw-distance edge). 1 = the game's haze.");
+        LookPreview = Config.Bind("Rendering", "LookPreview", false,
+            "Once per game, 40 s into the first mission in VR, show four looks for 8 s each (twice), labelled in the " +
+            "headset: 1 normal, 2 no haze (fog off), 3 raw colours (post-processing off), 4 both. Then back to normal.");
+        GpuAudit = Config.Bind("Rendering", "GpuAudit", false,
+            "Speed test: once per game, a minute into the first mission in VR, switch each graphics feature off for " +
+            "about two seconds and log what it costs the GPU ('[GpuAudit]' lines). Takes about two minutes; stand still. " +
+            "The controllers buzz briefly at the start and longer at the end.");
         CheapScopes = Config.Bind("Rendering", "CheapScopes", true,
             "In VR a scope's picture skips the effects you can't see in a small lens (the same ones the eyes skip, plus " +
             "ambient occlusion and decals), so aiming costs less.");
@@ -566,6 +588,12 @@ public class Plugin : BasePlugin
         BenchAutoOpenAt = Config.Bind("Menus", "BenchAutoOpenAt", "-17.5, -15.0",
             "With BenchAutoOpenName empty: the weapon table nearest this spot in the room (x, z in metres) opens by itself. " +
             "The default is the main bench in the Operation Room. Empty = the table nearest the mission laptop.");
+        BenchTheme = Config.Bind("Menus", "BenchTheme", true,
+            "In VR, restyle the weapon bench page in the mission screen's look (dark cards, gold highlight, gold " +
+            "corner brackets). Only colours and letter spacing change; every button works as before.");
+        BenchPageSize = Config.Bind("Menus", "BenchPageSize", 1.3f,
+            "How big the weapon bench page is in VR, compared with other menus (1 = the same). Bigger makes its " +
+            "writing easier to read; 0.5 to 2.5.");
         WeaponBenchOnTop = Config.Bind("Menus", "WeaponBenchOnTop", true,
             "At the armoury bench in VR, draw the weapon modding list on top of everything, so the table can't hide " +
             "the bottom of it.");
@@ -586,6 +614,9 @@ public class Plugin : BasePlugin
             "In VR, a big mission screen stands over each mission laptop as you walk up (operation, mission, plan, " +
             "deploy). Standing only: Interact at the laptop hands the pad to the screen instead of sitting you down " +
             "(stick, Cross, Circle; Circle on the first page hands it back). Off = sit at the laptop as the game does.");
+        MissionScreenMap = Config.Bind("Menus", "MissionScreenMap", true,
+            "Show the mission's overhead recon map behind everything on the VR mission screen's Plan and Deploy " +
+            "pages (darkened, under a tactical grid). Off = the grid only.");
         MissionScreenOnWindow = Config.Bind("Menus", "MissionScreenOnWindow", true,
             "Put the mission screen over the big white window on the wall near the laptop, filling it, when one is " +
             "found. Off (or none found) = it stands in the air just beyond the laptop.");
@@ -707,6 +738,12 @@ public class Plugin : BasePlugin
 
         // Temporary: saves each eye's rendered images to PNG (F3, and 20 s into each scene)
         AddComponent<EyeCapture>();
+
+        // Rendering.GpuAudit: measures what each graphics feature costs the GPU, once per game
+        AddComponent<OperatorVR.GpuAudit>();
+        AddComponent<OperatorVR.GpuSpikeWatch>();
+        AddComponent<OperatorVR.BenchTheme>();
+        AddComponent<OperatorVR.LookPreview>();
         var harmony = new HarmonyLib.Harmony(Guid);
         LaptopClickLog.Apply(harmony);
 
@@ -724,6 +761,9 @@ public class Plugin : BasePlugin
         LeftHand.Apply(harmony);
         RightHand.Apply(harmony);
         GunShift.Apply(harmony);
+
+        // The game's "under fire" screen effect is skipped while it has nothing to show (Rendering.IdleSuppressionOff)
+        SuppressionIdle.Apply(harmony);
 
         // Temporary: what the game's interaction scan hits (the laptop stopped offering its prompt)
         InteractScanLog.Apply(harmony);

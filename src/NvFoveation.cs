@@ -73,7 +73,10 @@ internal static unsafe class NvFoveation
         }
     }
 
-    private static float Strength => Mathf.Clamp01(Plugin.FoveatedRendering.Value);
+    // GpuAudit switches it off for a moment to measure what it saves
+    internal static bool AuditPause;
+
+    private static float Strength => AuditPause ? 0f : Mathf.Clamp01(Plugin.FoveatedRendering.Value);
 
     private static CommandBuffer FindCmd(object[] args)
     {

@@ -71,7 +71,7 @@ public class VREffects : MonoBehaviour
             _sharedFailed = true;
         }
 
-        if (Time.unscaledTime < _nextScan)
+        if (Time.unscaledTime < _nextScan || GpuAudit.Running)
             return;
         // Menus and scene changes swap volumes in, so keep checking: every 3 s (each check searches the whole scene
         // several times over, and every second was a likely source of the occasional long frames)
@@ -257,6 +257,13 @@ public class VREffects : MonoBehaviour
         {
             var all = new List<FrameSettingsField>(off);
             all.AddRange(UnusedInScope);
+            off = all.ToArray();
+        }
+        // Rendering.NoHaze (the user's pick from the look preview, 2026-11-10: "no haze"): the fog / atmosphere pass
+        // off, so far things are sharp and colours clear (and ~0.7-1 ms less GPU time)
+        if (Plugin.NoHaze.Value)
+        {
+            var all = new List<FrameSettingsField>(off) { FrameSettingsField.AtmosphericScattering };
             off = all.ToArray();
         }
         // Shading in corners and under things back on (Rendering.AmbientOcclusion, 2026-11-03): at RenderScale 1.0
@@ -597,6 +604,25 @@ public class VREffects : MonoBehaviour
         p.overrideState = true;
         p.value = false;
         Plugin.Logger.LogInfo($"[Effects] Volumetric fog off in volume '{volume}' (distance fog kept)");
+        ThinHaze(fog, volume);
+    }
+
+    // Rendering.HazeThinning (2026-11-10): with the haze off (Rendering.NoHaze) the view was clear and colourful but
+    // far trees shimmered and the draw-distance edge showed. Instead the haze is kept and made this many times
+    // thinner (its attenuation distance longer): near and mid-range clear, the far distance gently softened
+    private readonly Dictionary<IntPtr, (Fog fog, bool overrideState, float value)> _hazeThinned = new();
+
+    private void ThinHaze(Fog fog, string volume)
+    {
+        var k = Plugin.HazeThinning.Value;
+        if (k <= 1.01f || _hazeThinned.ContainsKey(fog.Pointer))
+            return;
+        var p = fog.meanFreePath;
+        _hazeThinned[fog.Pointer] = (fog, p.overrideState, p.value);
+        var was = p.value;
+        p.overrideState = true;
+        p.value = was * k;
+        Plugin.Logger.LogInfo($"[Effects] Haze in volume '{volume}' {k:0.#}x thinner in VR: fog attenuation distance {was:0} m -> {p.value:0} m");
     }
 
     private class CameraSettings
@@ -961,6 +987,17 @@ public class VREffects : MonoBehaviour
             }
         }
         _volumetricFogOff.Clear();
+
+        foreach (var (fog, overrideState, value) in _hazeThinned.Values)
+            try
+            {
+                if (fog == null)
+                    continue;
+                fog.meanFreePath.overrideState = overrideState;
+                fog.meanFreePath.value = value;
+            }
+            catch { }
+        _hazeThinned.Clear();
 
         foreach (var (s, overrideState, value) in _shadowCapped.Values)
         {

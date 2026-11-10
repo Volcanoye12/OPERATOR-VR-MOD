@@ -500,7 +500,7 @@ public class WeaponBench : MonoBehaviour
             if (go != null && go.activeInHierarchy)
                 return go;
         foreach (var c in VRMenus.FloatingCanvases())
-            if (c != null && c.isActiveAndEnabled && c.name.StartsWith("WeaponModdingCanvas"))
+            if (c != null && c.isActiveAndEnabled && c.name.StartsWith("WeaponModdingCanvas") && VRMenus.IsCurrentBenchPage(c))
                 return c.gameObject;
         return null;
     }

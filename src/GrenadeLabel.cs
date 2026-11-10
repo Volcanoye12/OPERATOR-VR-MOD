@@ -48,6 +48,7 @@ public class GrenadeLabel : MonoBehaviour
     private string _shown = "";
     private TMP_FontAsset _font;
     private int _logs, _failLogs;
+    private string _step = "";
     private string _lastSpoken;
 
     private void LateUpdate()
@@ -287,31 +288,45 @@ public class GrenadeLabel : MonoBehaviour
                 _lines[kind] = line = new Line { Kind = kind };
             // In the armoury (2026-11-01) a rebuild failed halfway when a count changed: the row had its pictures but
             // no writing, and was taken as done. Each line is now checked whole, and a failed one is made again next time
-            try
+            // 2026-11-10: it still failed now and then when the frag count changed (one thrown or picked up), and the
+            // line blinked out until the next count. A failed line is now made again from scratch at once (fresh
+            // picture and font), and the log names the step that failed
+            for (var attempt = 1; attempt <= 2; attempt++)
             {
-                if (line.Template == null)
-                    line.Template = BuildTemplate(sources[kind], kind);
-                if (line.Row == null || line.Text == null || line.Count != counts[kind])
-                    BuildRow(line, counts[kind]);
-                line.Held = kind == held;
-                line.Text.color = line.Held ? HeldColour : OtherColour;
-                line.Row.transform.localPosition = new Vector3(0f, -i * LineGap, 0f);
-                line.Row.SetActive(true);
-            }
-            catch (Exception e)
-            {
-                if (_failLogs++ < 10)
-                    Plugin.Logger.LogWarning($"[Grenade] Line for {kind} failed, making it again next time: {e.GetType().Name}: " +
-                                         $"{e.Message.Split('\n')[0]} (template {line.Template != null}, row {line.Row != null}, text {line.Text != null})");
-                if (line.Row != null)
-                    UnityEngine.Object.Destroy(line.Row);
-                if (line.Template != null)
-                    UnityEngine.Object.Destroy(line.Template);
-                line.Row = null;
-                line.Template = null;
-                line.Text = null;
-                line.Count = -1;
-                _shown = "";
+                try
+                {
+                    _step = "picture";
+                    if (line.Template == null)
+                        line.Template = BuildTemplate(sources[kind], kind);
+                    if (line.Row == null || line.Text == null || line.Count != counts[kind])
+                        BuildRow(line, counts[kind]);
+                    _step = "colour and place";
+                    line.Held = kind == held;
+                    line.Text.color = line.Held ? HeldColour : OtherColour;
+                    line.Row.transform.localPosition = new Vector3(0f, -i * LineGap, 0f);
+                    line.Row.SetActive(true);
+                    if (attempt > 1 && _failLogs < 10)
+                        Plugin.Logger.LogInfo($"[Grenade] Line for {kind} made again straight away: OK");
+                    break;
+                }
+                catch (Exception e)
+                {
+                    if (_failLogs++ < 10)
+                        Plugin.Logger.LogWarning($"[Grenade] Line for {kind} failed at '{_step}' (try {attempt}): {e.GetType().Name}: " +
+                                                 $"{e.Message.Split('\n')[0]} (template {line.Template != null}, row {line.Row != null}, " +
+                                                 $"text {line.Text != null}, font {(_font == null ? "none" : _font.name)})");
+                    if (line.Row != null)
+                        UnityEngine.Object.Destroy(line.Row);
+                    if (line.Template != null)
+                        UnityEngine.Object.Destroy(line.Template);
+                    line.Row = null;
+                    line.Template = null;
+                    line.Text = null;
+                    line.Count = -1;
+                    _font = null;   // look for the font again too
+                    if (attempt == 2)
+                        _shown = "";   // still failing: try again at the next count
+                }
             }
         }
         if (_logs++ < 10)
@@ -338,10 +353,12 @@ public class GrenadeLabel : MonoBehaviour
         // Not done until the writing is on: the count is set last
         line.Count = -1;
         line.Text = null;
+        _step = "row";
         line.Row = new GameObject($"{line.Kind} line");
         line.Row.transform.SetParent(_root.transform, false);
         var shown = Math.Min(count, MaxCopies);
         var width = (shown - 1) * CopyGap;
+        _step = "copies";
         for (var i = 0; i < shown; i++)
         {
             var c = UnityEngine.Object.Instantiate(line.Template, line.Row.transform);
@@ -352,6 +369,7 @@ public class GrenadeLabel : MonoBehaviour
 
         // The number, like the magazine label: a small world-space canvas drawn on top of everything, just right of
         // the row (left-aligned text, so its box starts there)
+        _step = "canvas";
         var textGo = new GameObject("Count");
         textGo.transform.SetParent(line.Row.transform, false);
         var canvas = textGo.AddComponent<Canvas>();
@@ -362,29 +380,48 @@ public class GrenadeLabel : MonoBehaviour
         textGo.GetComponent<RectTransform>().sizeDelta = new Vector2(boxWidth, 150f);
         textGo.transform.localScale = Vector3.one * 0.0002f;
         textGo.transform.localPosition = new Vector3(width / 2f + CopyGap * 0.6f + boxWidth * 0.0002f / 2f, 0f, 0f);
+        _step = "text";
         var textChild = new GameObject("Text");
         textChild.transform.SetParent(textGo.transform, false);
         var text = textChild.AddComponent<TextMeshProUGUI>();
+        if (text == null)
+            throw new InvalidOperationException("the text component could not be added");
         textChild.GetComponent<RectTransform>().sizeDelta = new Vector2(boxWidth, 150f);
-        if (_font == null)
+        _step = "font";
+        // Only a font that still has its material: the outline is drawn through it
+        if (_font == null || _font.material == null)
+        {
+            _font = null;
             foreach (var o in UnityEngine.Object.FindObjectsByType(Il2CppType.Of<TMP_Text>(), FindObjectsSortMode.None))
             {
                 var existing = o.TryCast<TMP_Text>();
-                if (existing != null && existing.font != null)
+                if (existing != null && existing.font != null && existing.font.material != null)
                 {
                     _font = existing.font;
                     break;
                 }
             }
+        }
         if (_font != null)
             text.font = _font;
         text.fontSize = 110f;
         text.alignment = TextAlignmentOptions.Left;
-        text.outlineWidth = 0.2f;
-        text.outlineColor = new Color32(0, 0, 0, 255);
         text.raycastTarget = false;
         // The flashbang and the ninebang look alike as pictures (2026-11-01), so each line says what it is
         text.text = $"{count} <size=65%>{DisplayName(line.Kind)}</size>";
+        _step = "outline";
+        // The black edge goes through the font's material; without it the number still shows, just without the edge
+        try
+        {
+            text.outlineWidth = 0.2f;
+            text.outlineColor = new Color32(0, 0, 0, 255);
+        }
+        catch (Exception e)
+        {
+            if (_failLogs++ < 10)
+                Plugin.Logger.LogWarning($"[Grenade] No black edge on the {line.Kind} number: {e.GetType().Name}: {e.Message.Split('\n')[0]}");
+        }
+        _step = "layer";
         if (MenusOnTop.Layer >= 0)
             SetLayer(textGo.transform, MenusOnTop.Layer);
         line.Text = text;

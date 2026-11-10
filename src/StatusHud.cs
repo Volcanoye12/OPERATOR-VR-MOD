@@ -35,7 +35,19 @@ public class StatusHud : MonoBehaviour
 
     private PlayerNetworking _me;
     private float _nextFind, _nextText;
-    private GameObject _root, _status, _compass, _stock;
+    private GameObject _root, _status, _compass, _stock, _notice;
+    private TextMeshProUGUI _noticeText;
+
+    // A message in the middle of the view, above the crosshair (e.g. the speed test), shown until NoticeUntil
+    private static readonly Vector3 NoticeAt = new(0f, 0.12f, 0.5f);
+    internal static string Notice;
+    internal static float NoticeUntil;
+
+    internal static void ShowNotice(string text, float seconds)
+    {
+        Notice = text;
+        NoticeUntil = Time.unscaledTime + seconds;
+    }
     private TextMeshProUGUI _statusText;
     private readonly List<(TextMeshProUGUI text, float bearing)> _marks = new();
     private TMP_FontAsset _font;
@@ -78,6 +90,12 @@ public class StatusHud : MonoBehaviour
             Place(_stock, StockAt, k, look);
             if (_stock.activeSelf != TouchKeys.StockOn)
                 _stock.SetActive(TouchKeys.StockOn);
+            Place(_notice, NoticeAt, k, look);
+            var notice = Time.unscaledTime < NoticeUntil ? Notice : null;
+            if (_notice.activeSelf != (notice != null))
+                _notice.SetActive(notice != null);
+            if (notice != null && _noticeText.text != notice)
+                _noticeText.text = notice;
             // Quicker while talking starts or stops, so the indicator follows the button
             if (Plugin.StatusHud.Value && (Time.unscaledTime >= _nextText || AimLean.Talking != _talkShown))
             {
@@ -326,6 +344,11 @@ public class StatusHud : MonoBehaviour
         stockText.text = "GUNSTOCK ACTIVATED";
         stockText.color = new Color(0.95f, 0.64f, 0.23f);
         _stock.SetActive(false);
+
+        _notice = NewCanvas("Notice", NoticeAt, new Vector2(1400f, 200f));
+        _noticeText = NewText(_notice.transform, "Text", Vector2.zero, new Vector2(1400f, 200f), 70f, TextAlignmentOptions.Center);
+        _noticeText.color = new Color(0.95f, 0.64f, 0.23f);
+        _notice.SetActive(false);
 
         _compass = NewCanvas("Compass", CompassAt, new Vector2(CompassWidth * UnitsPerMetre + 200f, 160f));
         var names = new Dictionary<int, string> { [0] = "N", [45] = "NE", [90] = "E", [135] = "SE", [180] = "S", [225] = "SW", [270] = "W", [315] = "NW" };

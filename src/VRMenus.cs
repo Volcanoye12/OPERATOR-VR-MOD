@@ -28,7 +28,16 @@ public class VRMenus : MonoBehaviour
         public bool Pinned, PinnedToWall;
         public Vector3 PinPos;
         public Quaternion PinRot;
+        public float PinnedAt;
+        public bool DepthLogged, Hidden;
     }
+
+    // The bench page in use (the nearest bench's, when the game has left another one open too); zero = none
+    private static IntPtr s_currentBench;
+
+    /// <summary>Whether this is the bench page in use (true too when only one is open or it isn't known yet).</summary>
+    internal static bool IsCurrentBenchPage(Canvas c) =>
+        c != null && (s_currentBench == IntPtr.Zero || c.Pointer == s_currentBench);
 
     // Keyed by native pointer: the same Il2Cpp object can come back as different managed wrappers
     private readonly Dictionary<IntPtr, Saved> _converted = new();
@@ -229,6 +238,36 @@ public class VRMenus : MonoBehaviour
         var width = Plugin.MenuWidth.Value * distance / WidthReferenceDistance;
 
         var tabOpen = TabMenuOpen();
+
+        // With more than one bench page open, the one whose bench is nearest you
+        var nearestBench = IntPtr.Zero;
+        var benchPages = 0;
+        var nearestD = float.MaxValue;
+        foreach (var kv in _converted)
+        {
+            var c = kv.Value.Canvas;
+            if (c == null || !c.isActiveAndEnabled || !c.name.StartsWith("WeaponModdingCanvas"))
+                continue;
+            benchPages++;
+            Transform at = null;
+            try { var wm = c.GetComponentInParent<WeaponModding>(true); at = wm != null ? wm.transform : null; } catch { }
+            var d = at != null ? Vector3.Distance(ct.position, at.position) : float.MaxValue - 1f;
+            if (d < nearestD)
+            {
+                nearestD = d;
+                nearestBench = c.Pointer;
+            }
+        }
+        s_currentBench = IntPtr.Zero;
+        foreach (var kv in _converted)
+        {
+            var c = kv.Value.Canvas;
+            if (c != null && c.isActiveAndEnabled && c.name.StartsWith("WeaponModdingCanvas") &&
+                (benchPages < 2 || c.Pointer == nearestBench))
+                s_currentBench = c.Pointer;
+        }
+        if (benchPages < 2)
+            nearestBench = IntPtr.Zero;
         var dead = new List<IntPtr>();
         var neededLayers = 0;
         foreach (var kv in _converted)
@@ -260,6 +299,21 @@ public class VRMenus : MonoBehaviour
             // the view made its boxes slide about behind the gun as the right stick turned (2026-11-03)
             if (s.Canvas.name.StartsWith("WeaponModdingCanvas"))
             {
+                // Only the page of the bench you're at: the game leaves the last bench's page open, and pinned on the
+                // wall behind this gun too, its empty list (in the game's brown) covered this page's list ("the dialog
+                // boxes were blank" at every bench after the first, 2026-11-10). Any other bench's page is shrunk away
+                if (s.Canvas.isActiveAndEnabled && nearestBench != IntPtr.Zero && s.Canvas.Pointer != nearestBench)
+                {
+                    if (!s.Hidden)
+                    {
+                        s.Hidden = true;
+                        Plugin.Logger.LogInfo($"[Menus] Another bench's page was still open: hidden while you use the nearest one");
+                    }
+                    s.Pinned = s.PinnedToWall = false;
+                    t.localScale = Vector3.zero;
+                    continue;
+                }
+                s.Hidden = false;
                 if (!s.Canvas.isActiveAndEnabled)
                     s.Pinned = s.PinnedToWall = false;
                 else
@@ -270,6 +324,8 @@ public class VRMenus : MonoBehaviour
                         s.Pinned = s.PinnedToWall = true;
                         s.PinPos = wallPos;
                         s.PinRot = wallRot;
+                        s.PinnedAt = Time.unscaledTime;
+                        s.DepthLogged = false;
                         Plugin.Logger.LogInfo($"[Menus] Bench page on the wall behind the gun, {Vector3.Distance(ct.position, wallPos):0.00} m away");
                     }
                     if (!s.Pinned)
@@ -278,8 +334,11 @@ public class VRMenus : MonoBehaviour
                         s.PinPos = ct.position + forward * d;
                         s.PinRot = bodyYaw;
                     }
-                    // Same apparent size as a floating menu at that distance
-                    var pinScale = Plugin.MenuWidth.Value * Vector3.Distance(ct.position, s.PinPos) / WidthReferenceDistance / pixelsWide;
+                    // Same apparent size as a floating menu at that distance, times Menus.BenchPageSize: the writing is
+                    // TextMeshPro (sharp at any size), so in the headset only a bigger page makes it easier to read
+                    // (the user, 2026-11-10)
+                    var pinScale = Plugin.MenuWidth.Value * Vector3.Distance(ct.position, s.PinPos) / WidthReferenceDistance / pixelsWide
+                                   * Mathf.Clamp(Plugin.BenchPageSize.Value, 0.5f, 2.5f);
                     t.SetPositionAndRotation(s.PinPos, s.PinRot);
                     t.localScale = new Vector3(pinScale, pinScale, pinScale);
                     continue;

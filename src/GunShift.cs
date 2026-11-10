@@ -106,15 +106,29 @@ public class GunShift : MonoBehaviour
         }
     }
 
-    // Ctrl + Left/Right moves the gun sideways, Ctrl + Up/Down up and down, 1 cm a press; saved to the settings
+    // Ctrl + Left/Right moves the gun sideways, Ctrl + Up/Down up and down, Ctrl + Shift + Up/Down further away /
+    // nearer (the user: "sometimes it feels too close to the face", 2026-11-10), 1 cm a press; saved to the settings
+    private const int VK_SHIFT = 0x10;
+
     private void Nudge()
     {
         var ctrl = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+        var shift = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
         var changed = false;
         if (KeyPressed(ctrl, VK_RIGHT, ref _rightDown)) { Plugin.GunShiftRight.Value += 0.01f; changed = true; }
         if (KeyPressed(ctrl, VK_LEFT, ref _leftDown)) { Plugin.GunShiftRight.Value -= 0.01f; changed = true; }
-        if (KeyPressed(ctrl, VK_UP, ref _upDown)) { Plugin.GunShiftUp.Value += 0.01f; changed = true; }
-        if (KeyPressed(ctrl, VK_DOWN, ref _downDown)) { Plugin.GunShiftUp.Value -= 0.01f; changed = true; }
+        if (KeyPressed(ctrl, VK_UP, ref _upDown))
+        {
+            if (shift) Plugin.GunShiftForward.Value = Mathf.Min(0.25f, Plugin.GunShiftForward.Value + 0.01f);
+            else Plugin.GunShiftUp.Value += 0.01f;
+            changed = true;
+        }
+        if (KeyPressed(ctrl, VK_DOWN, ref _downDown))
+        {
+            if (shift) Plugin.GunShiftForward.Value = Mathf.Max(-0.1f, Plugin.GunShiftForward.Value - 0.01f);
+            else Plugin.GunShiftUp.Value -= 0.01f;
+            changed = true;
+        }
         if (changed)
             Plugin.Logger.LogInfo($"[GunShift] Gun shifted {Plugin.GunShiftRight.Value * 100:0} cm right, {Plugin.GunShiftUp.Value * 100:0} cm up, " +
                                   $"{Plugin.GunShiftForward.Value * 100:0} cm forward");

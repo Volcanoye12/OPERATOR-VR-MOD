@@ -2,7 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using Il2CppInterop.Runtime;
+#if MELON
+using Il2CppTMPro;
+#else
 using TMPro;
+#endif
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -33,7 +37,7 @@ public class MissionScreen : MonoBehaviour
     private const float IdleRelease = 20f;
     private float _lastInput;
     private bool _inputWasDisabled;
-    private const int VisibleRows = 9;
+    private const int VisibleRows = 7;
     // Shown within this distance of a laptop (metres, level); the screen stands this far beyond the laptop, this wide
     private const float ShowRange = 3.5f, BeyondLaptop = 0.35f, ScreenWidth = 1.6f;
     // Laptops this far away (level) still count for the room's window screen
@@ -119,13 +123,20 @@ public class MissionScreen : MonoBehaviour
     private readonly List<MissionLaptop> _laptops = new();
 
     // UI
+    // 2026-11-10, the user's choice: a cinematic military look (dark tactical backdrop with the mission's map behind
+    // everything, big spaced-out title, step tabs, numbered cards, an intel panel with a gold edge, a controls bar
+    // that names the buttons of the controller in use)
     private GameObject _root;
-    private TextMeshProUGUI _title, _detail, _hint;
+    private TextMeshProUGUI _kicker, _title, _sub, _intelLabel, _detail, _hint;
     private RawImage _map;
-    // Where the map goes on the page (fractions of the page) when there's one to show; the text then sits below it
-    private static readonly Vector2 MapBoxMin = new(0.52f, 0.36f), MapBoxMax = new(0.97f, 0.86f);
-    private readonly List<(Image back, TextMeshProUGUI text)> _rowUi = new();
+    private Image _mapShade;
+    private readonly List<(Image border, Image back, TextMeshProUGUI num, TextMeshProUGUI text)> _rowUi = new();
+    private readonly List<(Image border, Image back, TextMeshProUGUI text)> _tabs = new();
     private TMP_FontAsset _font;
+
+    private static readonly Color Gold = new(0.91f, 0.725f, 0.19f), Ink = new(0.04f, 0.05f, 0.06f),
+        TextMain = new(0.91f, 0.9f, 0.88f), TextDim = new(0.66f, 0.69f, 0.71f), LineCol = new(0.2f, 0.24f, 0.27f),
+        Backdrop = new(0.063f, 0.086f, 0.1f), GridCol = new(0.13f, 0.17f, 0.19f, 0.8f);
 
     // Pad / keyboard repeat
     private readonly Dictionary<int, (bool down, float next)> _keys = new();
@@ -983,7 +994,35 @@ public class MissionScreen : MonoBehaviour
         _root.GetComponent<RectTransform>().sizeDelta = new Vector2(CanvasWidth, CanvasHeight);
 
         // Solid: see-through, the glowing blinds behind showed through it
-        var panel = Box(_root.transform, "Panel", Vector2.zero, Vector2.one, new Color(0.05f, 0.07f, 0.06f, 1f));
+        var panel = Box(_root.transform, "Panel", Vector2.zero, Vector2.one, Backdrop);
+
+        // The mission's map fills the whole screen behind everything, darkened so the writing stands out
+        var mapGo = new GameObject("Map");
+        mapGo.transform.SetParent(panel, false);
+        var mrt = mapGo.AddComponent<RectTransform>();
+        mrt.anchorMin = mrt.anchorMax = new Vector2(0.5f, 0.5f);
+        _map = mapGo.AddComponent<RawImage>();
+        _map.raycastTarget = false;
+        mapGo.SetActive(false);
+        // A plain tactical grid over it (and on its own when there's no map)
+        for (var x = 64f; x < CanvasWidth; x += 64f)
+            Box(panel, "Grid", new Vector2(x / CanvasWidth, 0f), new Vector2(x / CanvasWidth, 1f), GridCol, new Vector2(-1f, 0f), new Vector2(1f, 0f));
+        for (var y = 64f; y < CanvasHeight; y += 64f)
+            Box(panel, "Grid", new Vector2(0f, y / CanvasHeight), new Vector2(1f, y / CanvasHeight), GridCol, new Vector2(0f, -1f), new Vector2(0f, 1f));
+        _mapShade = Box(panel, "Shade", Vector2.zero, Vector2.one, new Color(Ink.r, Ink.g, Ink.b, 0.5f)).GetComponent<Image>();
+        _mapShade.gameObject.SetActive(false);
+        // Gold corner brackets framing the screen
+        foreach (var (cx, cy) in new[] { (0f, 0f), (1f, 0f), (0f, 1f), (1f, 1f) })
+        {
+            var a = new Vector2(cx, cy);
+            var sx = cx == 0f ? 1f : -1f;
+            var sy = cy == 0f ? 1f : -1f;
+            Box(panel, "Corner", a, a, Gold, new Vector2(Mathf.Min(0f, sx * 70f) + sx * 18f, Mathf.Min(0f, sy * 5f) + sy * 18f),
+                new Vector2(Mathf.Max(0f, sx * 70f) + sx * 18f, Mathf.Max(0f, sy * 5f) + sy * 18f));
+            Box(panel, "Corner", a, a, Gold, new Vector2(Mathf.Min(0f, sx * 5f) + sx * 18f, Mathf.Min(0f, sy * 70f) + sy * 18f),
+                new Vector2(Mathf.Max(0f, sx * 5f) + sx * 18f, Mathf.Max(0f, sy * 70f) + sy * 18f));
+        }
+
         // Everything but the backdrop, so it can be hidden while the game's infil map lies on the screen
         var contentGo = new GameObject("Content");
         contentGo.transform.SetParent(panel, false);
@@ -993,43 +1032,90 @@ public class MissionScreen : MonoBehaviour
         crt.offsetMin = crt.offsetMax = Vector2.zero;
         _content = contentGo;
         var body = contentGo.transform;
-        _title = Label(body, "Title", new Vector2(0.03f, 0.88f), new Vector2(0.97f, 0.98f), 52f, TextAlignmentOptions.Left);
-        _hint = Label(body, "Hint", new Vector2(0.03f, 0.01f), new Vector2(0.97f, 0.08f), 30f, TextAlignmentOptions.Left);
-        _hint.color = new Color(0.8f, 0.8f, 0.72f);
-        _detail = Label(body, "Detail", new Vector2(0.52f, 0.1f), new Vector2(0.97f, 0.86f), 32f, TextAlignmentOptions.TopLeft);
+
+        // Title block, top left
+        _kicker = Label(body, "Kicker", new Vector2(0.035f, 0.885f), new Vector2(0.6f, 0.94f), 26f, TextAlignmentOptions.BottomLeft);
+        _kicker.color = Gold;
+        _kicker.characterSpacing = 14f;
+        _title = Label(body, "Title", new Vector2(0.035f, 0.755f), new Vector2(0.64f, 0.885f), 96f, TextAlignmentOptions.Left);
+        _title.fontStyle = FontStyles.Bold;
+        _title.characterSpacing = 10f;
+        _title.enableAutoSizing = true;
+        _title.fontSizeMin = 48f;
+        _title.fontSizeMax = 96f;
+        _title.enableWordWrapping = false;
+        _sub = Label(body, "Sub", new Vector2(0.035f, 0.71f), new Vector2(0.64f, 0.76f), 26f, TextAlignmentOptions.TopLeft);
+        _sub.color = TextDim;
+        _sub.characterSpacing = 8f;
+
+        // Step tabs, top right: OPERATION, MISSION, PLAN, DEPLOY
+        string[] tabs = { "OPERATION", "MISSION", "PLAN", "DEPLOY" };
+        for (var i = 0; i < tabs.Length; i++)
+        {
+            var x0 = 0.545f + i * 0.107f;
+            var border = Box(body, $"Tab {i}", new Vector2(x0, 0.895f), new Vector2(x0 + 0.102f, 0.95f), LineCol);
+            var back = Box(border, "Back", Vector2.zero, Vector2.one, Ink, new Vector2(2f, 2f), new Vector2(-2f, -2f));
+            var text = Label(back, "Text", Vector2.zero, Vector2.one, 22f, TextAlignmentOptions.Center);
+            text.text = tabs[i];
+            text.characterSpacing = 6f;
+            _tabs.Add((border.GetComponent<Image>(), back.GetComponent<Image>(), text));
+        }
+
+        // Intel panel, right: a gold edge, the briefing and the plan
+        var intel = Box(body, "Intel", new Vector2(0.655f, 0.12f), new Vector2(0.965f, 0.845f), new Color(Ink.r, Ink.g, Ink.b, 0.85f));
+        Box(intel, "Edge", Vector2.zero, new Vector2(0f, 1f), Gold, Vector2.zero, new Vector2(8f, 0f));
+        _intelLabel = Label(intel, "Label", new Vector2(0.07f, 0.905f), new Vector2(0.95f, 0.975f), 24f, TextAlignmentOptions.Left);
+        _intelLabel.color = Gold;
+        _intelLabel.characterSpacing = 10f;
+        _detail = Label(intel, "Detail", new Vector2(0.07f, 0.03f), new Vector2(0.95f, 0.9f), 30f, TextAlignmentOptions.TopLeft);
+        _detail.color = TextMain;
         // A long briefing shrinks to fit rather than running off the bottom
         _detail.enableAutoSizing = true;
-        _detail.fontSizeMin = 20f;
-        _detail.fontSizeMax = 32f;
+        _detail.fontSizeMin = 18f;
+        _detail.fontSizeMax = 30f;
 
-        // The mission's map on the plan and deploy pages (the user's request), above the text
-        var mapGo = new GameObject("Map");
-        mapGo.transform.SetParent(body, false);
-        var mrt = mapGo.AddComponent<RectTransform>();
-        mrt.anchorMin = mrt.anchorMax = new Vector2((MapBoxMin.x + MapBoxMax.x) / 2f, (MapBoxMin.y + MapBoxMax.y) / 2f);
-        _map = mapGo.AddComponent<RawImage>();
-        _map.raycastTarget = false;
-        mapGo.SetActive(false);
-
+        // Numbered cards, left
+        const float cardsTop = 0.67f, cardsBottom = 0.12f;
+        var h = (cardsTop - cardsBottom) / VisibleRows;
         for (var i = 0; i < VisibleRows; i++)
         {
-            var top = 0.86f - i * (0.76f / VisibleRows);
-            var row = Box(body, $"Row {i}", new Vector2(0.03f, top - 0.76f / VisibleRows + 0.006f), new Vector2(0.5f, top), new Color(1f, 1f, 1f, 0.06f));
-            var text = Label(row, "Text", new Vector2(0.03f, 0f), new Vector2(0.97f, 1f), 36f, TextAlignmentOptions.Left);
-            _rowUi.Add((row.GetComponent<Image>(), text));
+            var top = cardsTop - i * h;
+            var border = Box(body, $"Card {i}", new Vector2(0.035f, top - h + 0.008f), new Vector2(0.42f, top), LineCol);
+            var back = Box(border, "Back", Vector2.zero, Vector2.one, Ink, new Vector2(2f, 2f), new Vector2(-2f, -2f));
+            var num = Label(back, "Number", new Vector2(0.03f, 0f), new Vector2(0.13f, 1f), 24f, TextAlignmentOptions.Left);
+            num.characterSpacing = 4f;
+            var text = Label(back, "Text", new Vector2(0.13f, 0f), new Vector2(0.98f, 1f), 32f, TextAlignmentOptions.Left);
+            text.characterSpacing = 4f;
+            text.enableAutoSizing = true;
+            text.fontSizeMin = 20f;
+            text.fontSizeMax = 32f;
+            text.enableWordWrapping = false;
+            text.overflowMode = TextOverflowModes.Ellipsis;
+            _rowUi.Add((border.GetComponent<Image>(), back.GetComponent<Image>(), num, text));
         }
+
+        // Controls bar along the bottom
+        Box(body, "Rule", new Vector2(0.035f, 0.085f), new Vector2(0.965f, 0.085f), LineCol, new Vector2(0f, -1f), new Vector2(0f, 1f));
+        _hint = Label(body, "Hint", new Vector2(0.035f, 0.02f), new Vector2(0.965f, 0.078f), 24f, TextAlignmentOptions.Left);
+        _hint.color = TextDim;
+        _hint.characterSpacing = 6f;
         Plugin.Logger.LogInfo("[Missions] Mission screen made");
     }
 
     [Il2CppInterop.Runtime.Attributes.HideFromIl2Cpp]
-    private static Transform Box(Transform parent, string name, Vector2 min, Vector2 max, Color colour)
+    private static Transform Box(Transform parent, string name, Vector2 min, Vector2 max, Color colour) =>
+        Box(parent, name, min, max, colour, Vector2.zero, Vector2.zero);
+
+    [Il2CppInterop.Runtime.Attributes.HideFromIl2Cpp]
+    private static Transform Box(Transform parent, string name, Vector2 min, Vector2 max, Color colour, Vector2 offsetMin, Vector2 offsetMax)
     {
         var go = new GameObject(name);
         go.transform.SetParent(parent, false);
         var rt = go.AddComponent<RectTransform>();
         rt.anchorMin = min;
         rt.anchorMax = max;
-        rt.offsetMin = rt.offsetMax = Vector2.zero;
+        rt.offsetMin = offsetMin;
+        rt.offsetMax = offsetMax;
         var img = go.AddComponent<Image>();
         img.color = colour;
         img.raycastTarget = false;
@@ -1050,11 +1136,59 @@ public class MissionScreen : MonoBehaviour
             t.font = _font;
         t.fontSize = size;
         t.alignment = align;
-        t.color = Color.white;
+        t.color = TextMain;
         t.richText = true;
         t.raycastTarget = false;
         return t;
     }
+
+    [Il2CppInterop.Runtime.Attributes.HideFromIl2Cpp]
+    private static void SetText(TMP_Text t, string s)
+    {
+        if (t.text != s)
+            t.text = s;
+    }
+
+    // ---- Button names for the controller in use ----
+    // The pad goes through Steam Input as keys (Circle = C, Options = Escape, R2 = left mouse button); Touch presses
+    // the same keys through Controls.TouchMap, so the Touch names come from that map (B = Crouch = C, and so on)
+
+    [Il2CppInterop.Runtime.Attributes.HideFromIl2Cpp]
+    private static string TouchButton(string action)
+    {
+        try
+        {
+            foreach (var entry in (Plugin.TouchMap.Value ?? "").Split(','))
+            {
+                var kv = entry.Split('=');
+                if (kv.Length == 2 && string.Equals(kv[1].Trim(), action, StringComparison.OrdinalIgnoreCase))
+                    return Spaced(kv[0].Trim());
+            }
+        }
+        catch { }
+        return null;
+    }
+
+    // "RightStickClick" -> "RIGHT STICK CLICK"
+    [Il2CppInterop.Runtime.Attributes.HideFromIl2Cpp]
+    private static string Spaced(string name)
+    {
+        var sb = new System.Text.StringBuilder();
+        for (var i = 0; i < name.Length; i++)
+        {
+            if (i > 0 && char.IsUpper(name[i]) && !char.IsUpper(name[i - 1]))
+                sb.Append(' ');
+            sb.Append(char.ToUpperInvariant(name[i]));
+        }
+        return sb.ToString();
+    }
+
+    [Il2CppInterop.Runtime.Attributes.HideFromIl2Cpp]
+    private static string Button(string action, string padName) =>
+        Plugin.TouchControls.Value ? TouchButton(action) ?? padName : padName;
+
+    [Il2CppInterop.Runtime.Attributes.HideFromIl2Cpp]
+    private static string Key(string button, string what) => $"<color=#E8B931>{button}</color>  {what}";
 
     private void Paint()
     {
@@ -1065,42 +1199,95 @@ public class MissionScreen : MonoBehaviour
             _content.SetActive(!pageUp);
         if (pageUp)
             return;
-        _title.text = _step switch
+
+        var touch = Plugin.TouchControls.Value;
+        var opName = Loc(_op?.OperationName).ToUpperInvariant();
+        CerebusTargetPackage shownPkg = _step == Step.Missions ? RowObject(_op?.TargetPackages) : _pkg;
+        var area = shownPkg != null ? (shownPkg.OPERATION_AREA_OF_OPERATION ?? "").ToUpperInvariant() : "";
+        var type = shownPkg != null ? Loc(shownPkg.OperationType).ToUpperInvariant() : "";
+        var stickSide = touch ? "LEFT STICK" : "STICK";
+        switch (_step)
         {
-            Step.Operations => _simulation ? "SIMULATIONS   <color=#888>(stick left: operations)</color>" : "OPERATIONS   <color=#888>(stick right: simulations)</color>",
-            Step.Missions => $"{Loc(_op?.OperationName)}  -  MISSIONS",
-            Step.Options => $"{(_pkg != null ? PackageName(_pkg) : "")}  -  PLAN",
-            _ => "READY TO DEPLOY",
-        };
+            case Step.Operations:
+                SetText(_kicker, _simulation ? "TRAINING  ·  SIMULATIONS" : "COMMAND  ·  LIVE OPERATIONS");
+                SetText(_title, _simulation ? "SIMULATIONS" : "OPERATIONS");
+                SetText(_sub, $"SELECT AN OPERATION   ·   {stickSide} {(_simulation ? "LEFT: OPERATIONS" : "RIGHT: SIMULATIONS")}");
+                SetText(_intelLabel, "INTEL");
+                break;
+            case Step.Missions:
+                SetText(_kicker, $"OPERATION  ·  {opName}");
+                SetText(_title, string.IsNullOrEmpty(area) ? (string.IsNullOrEmpty(opName) ? "MISSIONS" : opName) : area);
+                SetText(_sub, (string.IsNullOrEmpty(type) ? "" : type + "   ·   ") + "SELECT A MISSION");
+                SetText(_intelLabel, "INTEL");
+                break;
+            case Step.Options:
+                SetText(_kicker, $"OPERATION  ·  {opName}");
+                SetText(_title, string.IsNullOrEmpty(area) ? "MISSION PLAN" : area);
+                SetText(_sub, (string.IsNullOrEmpty(type) ? "" : type + "   ·   ") + "MISSION PLAN");
+                SetText(_intelLabel, "BRIEFING");
+                break;
+            default:
+                SetText(_kicker, $"OPERATION  ·  {opName}");
+                SetText(_title, string.IsNullOrEmpty(area) ? "DEPLOY" : area);
+                SetText(_sub, (string.IsNullOrEmpty(type) ? "" : type + "   ·   ") + "READY TO DEPLOY");
+                SetText(_intelLabel, "DEPLOY");
+                break;
+        }
+
+        // Tabs: the current step filled gold, earlier ones outlined in gold, later ones grey
+        var current = (int)_step;
+        for (var i = 0; i < _tabs.Count; i++)
+        {
+            var (border, back, text) = _tabs[i];
+            var on = i == current;
+            border.color = on || i < current ? Gold : LineCol;
+            back.color = on ? Gold : Ink;
+            text.color = on ? Ink : i < current ? Gold : TextDim;
+        }
+
         string idle;
+        var interact = touch ? TouchButton("Interact") ?? "INTERACT" : "INTERACT";
         if (!_haveWindow)
-            idle = "Press Interact at the laptop to choose a mission";
+            idle = $"PRESS {interact} AT THE LAPTOP TO CHOOSE A MISSION";
         else
         {
             var cam = Camera.main;
-            idle = cam != null && AtWindow(cam) ? "Press Interact to choose a mission" : "Walk up to this screen and press Interact to choose a mission";
+            idle = cam != null && AtWindow(cam) ? $"PRESS {interact} TO CHOOSE A MISSION" : $"WALK UP TO THIS SCREEN AND PRESS {interact}";
         }
-        _hint.text = HasControl
-            ? "Stick: move   Left/right: change   R2: select   Circle: back   Interact or Options: done"
-            : $"<color=#FFD933>{idle}</color>";
+        SetText(_hint, HasControl
+            ? string.Join("      ", Key(touch ? "LEFT STICK" : "STICK", "MOVE"), Key(touch ? "LEFT STICK LEFT/RIGHT" : "LEFT/RIGHT", "CHANGE"),
+                Key(Button("Shoot", "R2"), "SELECT"), Key(Button("Crouch", "CIRCLE"), "BACK"), // Touch: Interact again (the left Menu button doesn't reach the game under SteamVR / Virtual Desktop)
+                touch ? Key(TouchButton("Interact") ?? "INTERACT", "DONE") : Key("OPTIONS", "DONE"))
+            : $"<color=#E8B931>{idle}</color>");
 
         if (_sel < _top) _top = _sel;
         if (_sel >= _top + VisibleRows) _top = _sel - VisibleRows + 1;
+        var n = 0;
         for (var i = 0; i < _rowUi.Count; i++)
         {
-            var (back, text) = _rowUi[i];
+            var (border, back, num, text) = _rowUi[i];
             var index = _top + i;
             var on = index < _rows.Count;
-            if (back.gameObject.activeSelf != on)
-                back.gameObject.SetActive(on);
+            if (border.gameObject.activeSelf != on)
+                border.gameObject.SetActive(on);
             if (!on)
                 continue;
             var row = _rows[index];
             var selected = HasControl && index == _sel;
-            text.text = row.Locked ? $"<color=#777>{row.Text}  (locked)</color>" : row.Text;
-            back.color = selected ? new Color(0.85f, 0.65f, 0.15f, 0.55f) : new Color(1f, 1f, 1f, 0.06f);
+            var label = row.Text ?? "";
+            var isBack = label.StartsWith("<");
+            if (isBack)
+                label = label.TrimStart('<', ' ');
+            label = label.ToUpperInvariant();
+            n = index + 1;
+            SetText(num, isBack ? "<" : n.ToString("00"));
+            SetText(text, row.Locked ? $"{label}   <size=70%>LOCKED</size>" : label);
+            border.color = selected ? Gold : LineCol;
+            back.color = selected ? new Color(0.25f, 0.2f, 0.07f, 0.92f) : new Color(Ink.r, Ink.g, Ink.b, 0.82f);
+            num.color = selected ? Gold : new Color(0.44f, 0.47f, 0.49f);
+            text.color = row.Locked ? new Color(0.45f, 0.47f, 0.48f) : selected ? Color.white : TextMain;
         }
-        _detail.text = Detail() + (string.IsNullOrEmpty(_message) ? "" : $"\n\n<color=#FFD933>{_message}</color>");
+        SetText(_detail, Detail() + (string.IsNullOrEmpty(_message) ? "" : $"\n\n<color=#E8B931>{_message}</color>"));
         PaintMap();
     }
 
@@ -1111,12 +1298,24 @@ public class MissionScreen : MonoBehaviour
     private Texture _mapTex;
     private Rect _mapUv = new(0f, 0f, 1f, 1f);
     private int _mapLogs;
+    private IntPtr _mapFor;
 
     private void PaintMap()
     {
-        // Off: none of the board's pictures is the map itself (it picked a white square, the target's photo, then an
-        // old screenshot), and the game's own infil map now comes up on this screen as a page after Start
-        var want = false;
+        // The board's pictures, saved on 2026-11-10 (SaveBoardPictures), showed the map is the picture on
+        // 'MAP(Clone)/RawImage' or 'MAP(Clone)/MAP/Map Image': a grey overhead recon shot (Georgia's is named
+        // 'Screenshot_...', which the 2026-11-03 try wrongly took for a stray screenshot). Only once a mission is
+        // chosen (Plan and Deploy): the board still holds the last mission's map before that
+        var want = Plugin.MissionScreenMap.Value && (_step == Step.Options || _step == Step.Confirm);
+        if (_step == Step.Options && Plugin.Diagnostics.Value)
+            SaveBoardPictures();
+        var mapFor = _pkg != null ? _pkg.Pointer : IntPtr.Zero;
+        if (mapFor != _mapFor)
+        {
+            _mapFor = mapFor;
+            _mapTex = null;
+            _nextMapLook = 0f;
+        }
         if (want && Time.unscaledTime >= _nextMapLook)
         {
             _nextMapLook = Time.unscaledTime + 1f;
@@ -1132,10 +1331,8 @@ public class MissionScreen : MonoBehaviour
         var show = want && _mapTex != null;
         if (_map.gameObject.activeSelf != show)
             _map.gameObject.SetActive(show);
-        var drt = _detail.rectTransform;
-        var textMax = new Vector2(0.97f, show ? MapBoxMin.y - 0.02f : 0.86f);
-        if (drt.anchorMax != textMax)
-            drt.anchorMax = textMax;
+        if (_mapShade.gameObject.activeSelf != show)
+            _mapShade.gameObject.SetActive(show);
         if (!show)
             return;
         if (_map.texture == null || _map.texture.Pointer != _mapTex.Pointer)
@@ -1143,14 +1340,125 @@ public class MissionScreen : MonoBehaviour
             _map.texture = _mapTex;
             _map.uvRect = _mapUv;
         }
-        // Fit the map in its box, its shape kept
-        var page = _root.GetComponent<RectTransform>().sizeDelta;
-        var boxW = (MapBoxMax.x - MapBoxMin.x) * page.x;
-        var boxH = (MapBoxMax.y - MapBoxMin.y) * page.y;
+        // Cover the whole screen, its shape kept (the edges cut off rather than bars)
         var aspect = Mathf.Max(0.1f, _mapTex.width * _mapUv.width) / Mathf.Max(0.1f, _mapTex.height * _mapUv.height);
-        var size = boxW / boxH > aspect ? new Vector2(boxH * aspect, boxH) : new Vector2(boxW, boxW / aspect);
+        var page = CanvasWidth / CanvasHeight;
+        var size = aspect > page ? new Vector2(CanvasHeight * aspect, CanvasHeight) : new Vector2(CanvasWidth, CanvasWidth / aspect);
         if (_map.rectTransform.sizeDelta != size)
             _map.rectTransform.sizeDelta = size;
+    }
+
+    // ---- Finding the map: every picture on the planning board, saved once per mission ----
+    // To BepInEx\OperatorVR_maps\<mission>\, with a log line each, so the right one can be told apart by eye
+    private readonly HashSet<IntPtr> _savedFor = new();
+
+    private void SaveBoardPictures()
+    {
+        if (_pkg == null || _savedFor.Contains(_pkg.Pointer))
+            return;
+        var board = Board();
+        if (board == null)
+            return;
+        _savedFor.Add(_pkg.Pointer);
+        try
+        {
+            var dir = System.IO.Path.Combine(BepInEx.Paths.BepInExRootPath, "OperatorVR_maps", SafeName(PackageName(_pkg)));
+            System.IO.Directory.CreateDirectory(dir);
+            var seen = new HashSet<IntPtr>();
+            var saved = 0;
+            var places = new List<(string where, Transform t)>();
+            if (board.MapParent != null) places.Add(("MapParent", board.MapParent));
+            if (board.FullscreenMapParent != null) places.Add(("FullscreenMap", board.FullscreenMapParent));
+            try
+            {
+                var prefab = board.CerebusOpboard != null ? board.CerebusOpboard.MapPrefab : null;
+                if (prefab != null) places.Add(("MapPrefab", prefab.transform));
+            }
+            catch { }
+            places.Add(("Board", board.transform));
+            foreach (var (where, parent) in places)
+                foreach (var g in parent.GetComponentsInChildren<Graphic>(true))
+                {
+                    Texture t = null;
+                    var raw = g != null ? g.TryCast<RawImage>() : null;
+                    if (raw != null)
+                        t = raw.texture;
+                    else
+                    {
+                        var img = g != null ? g.TryCast<Image>() : null;
+                        if (img != null && img.sprite != null)
+                            t = img.sprite.texture;
+                    }
+                    if (t == null || t.width < 128 || t.height < 128 || !seen.Add(t.Pointer) || saved >= 40)
+                        continue;
+                    var file = $"{saved:00}_{where}_{SafeName(t.name)}_{t.width}x{t.height}.png";
+                    SavePicture(t, System.IO.Path.Combine(dir, file));
+                    Plugin.Logger.LogInfo($"[Missions] Board picture {file}: on '{g.name}' (path {PathOf(g.transform, parent)})");
+                    saved++;
+                }
+            var info = OperationsManager.CurrentOperationInfo;
+            if (info != null && info.MapImage != null && seen.Add(info.MapImage.Pointer))
+            {
+                var file = $"{saved:00}_OperationInfo_MapImage_{SafeName(info.MapImage.name)}.png";
+                SavePicture(info.MapImage, System.IO.Path.Combine(dir, file));
+                Plugin.Logger.LogInfo($"[Missions] Board picture {file}: OperationsManager.CurrentOperationInfo.MapImage");
+                saved++;
+            }
+            Plugin.Logger.LogInfo($"[Missions] Saved {saved} planning-board picture(s) for '{PackageName(_pkg)}' to {dir}");
+        }
+        catch (Exception e)
+        {
+            Plugin.Logger.LogWarning($"[Missions] Saving the board's pictures failed: {e.GetType().Name}: {e.Message}");
+        }
+    }
+
+    [Il2CppInterop.Runtime.Attributes.HideFromIl2Cpp]
+    private static void SavePicture(Texture src, string path)
+    {
+        // Any texture, readable or not: drawn into a temporary picture first; at most 1024 across
+        var k = Mathf.Min(1f, 1024f / Mathf.Max(src.width, src.height));
+        var w = Math.Max(1, Mathf.RoundToInt(src.width * k));
+        var h = Math.Max(1, Mathf.RoundToInt(src.height * k));
+        var rt = RenderTexture.GetTemporary(w, h, 0, RenderTextureFormat.ARGB32);
+        var prev = RenderTexture.active;
+        try
+        {
+            Graphics.Blit(src, rt);
+            RenderTexture.active = rt;
+            var tex = new Texture2D(w, h, TextureFormat.RGBA32, false);
+            tex.ReadPixels(new Rect(0, 0, w, h), 0, 0);
+            tex.Apply();
+            System.IO.File.WriteAllBytes(path, ImageConversion.EncodeToPNG(tex));
+            UnityEngine.Object.Destroy(tex);
+        }
+        finally
+        {
+            RenderTexture.active = prev;
+            RenderTexture.ReleaseTemporary(rt);
+        }
+    }
+
+    [Il2CppInterop.Runtime.Attributes.HideFromIl2Cpp]
+    private static string SafeName(string s)
+    {
+        s ??= "";
+        foreach (var c in System.IO.Path.GetInvalidFileNameChars())
+            s = s.Replace(c, '_');
+        s = s.Replace(' ', '_');
+        return s.Length > 40 ? s.Substring(0, 40) : s;
+    }
+
+    [Il2CppInterop.Runtime.Attributes.HideFromIl2Cpp]
+    private static string PathOf(Transform t, Transform stop)
+    {
+        var parts = new List<string>();
+        for (var p = t; p != null && parts.Count < 8; p = p.parent)
+        {
+            parts.Insert(0, p.name);
+            if (stop != null && p.Pointer == stop.Pointer)
+                break;
+        }
+        return string.Join("/", parts);
     }
 
     [Il2CppInterop.Runtime.Attributes.HideFromIl2Cpp]
@@ -1161,64 +1469,51 @@ public class MissionScreen : MonoBehaviour
         try
         {
             var board = Board();
-            // The biggest picture FILE, not the biggest shape: the first try took 'Background', a 32x32 white square
-            // stretched across the map area (2026-11-03). Small textures (UI pieces, markers) are skipped
-            var bestArea = 0f;
-            var places = new List<Transform>();
-            if (board != null && board.MapParent != null)
-                places.Add(board.MapParent);
-            if (board != null && board.FullscreenMapParent != null)
-                places.Add(board.FullscreenMapParent);
-            try
+            var parent = board != null ? board.MapParent : null;
+            if (parent == null)
+                return null;
+            // The map prefab's own map picture first ('RawImage' / 'Map Image' right under MAP(Clone)); else the
+            // biggest picture there that isn't the target's photo, a marker or a button
+            var bestScore = 0f;
+            foreach (var g in parent.GetComponentsInChildren<Graphic>(true))
             {
-                var prefab = board != null && board.CerebusOpboard != null ? board.CerebusOpboard.MapPrefab : null;
-                if (prefab != null)
-                    places.Add(prefab.transform);
-            }
-            catch { }
-            foreach (var parent in places)
-                foreach (var g in parent.GetComponentsInChildren<Graphic>(true))
+                if (g == null)
+                    continue;
+                Texture t = null;
+                var r = new Rect(0f, 0f, 1f, 1f);
+                var raw = g.TryCast<RawImage>();
+                if (raw != null)
                 {
-                    if (g == null)
-                        continue;
-                    Texture t = null;
-                    var r = new Rect(0f, 0f, 1f, 1f);
-                    var raw = g.TryCast<RawImage>();
-                    if (raw != null)
+                    t = raw.texture;
+                    r = raw.uvRect;
+                }
+                else
+                {
+                    var img = g.TryCast<Image>();
+                    if (img != null && img.sprite != null && img.sprite.texture != null)
                     {
-                        t = raw.texture;
-                        r = raw.uvRect;
-                    }
-                    else
-                    {
-                        var img = g.TryCast<Image>();
-                        if (img != null && img.sprite != null && img.sprite.texture != null)
-                        {
-                            t = img.sprite.texture;
-                            var tr = img.sprite.textureRect;
-                            r = new Rect(tr.x / t.width, tr.y / t.height, tr.width / t.width, tr.height / t.height);
-                        }
-                    }
-                    if (t == null || t.width < 256 || t.height < 256)
-                        continue;
-                    // A map, not the target's photo ('Georgia HVT Selfie' was picked, 2026-11-03): names that say
-                    // map come first, photos are skipped
-                    var lower = (t.name ?? "").ToLowerInvariant();
-                    if (lower.Contains("selfie") || lower.Contains("photo") || lower.Contains("portrait"))
-                        continue;
-                    var pixels = t.width * r.width * t.height * r.height * (lower.Contains("map") || lower.Contains("sat") ? 100f : 1f);
-                    if (pixels > bestArea)
-                    {
-                        best = t;
-                        bestArea = pixels;
-                        uv = r;
+                        t = img.sprite.texture;
+                        var tr = img.sprite.textureRect;
+                        r = new Rect(tr.x / t.width, tr.y / t.height, tr.width / t.width, tr.height / t.height);
                     }
                 }
-            if (best == null)
-            {
-                var info = OperationsManager.CurrentOperationInfo;
-                if (info != null && info.MapImage != null)
-                    best = info.MapImage;
+                if (t == null || t.width < 256 || t.height < 256)
+                    continue;
+                var lower = (t.name ?? "").ToLowerInvariant();
+                var gname = (g.name ?? "").ToLowerInvariant();
+                if (lower.Contains("hvt") || lower.Contains("selfie") || lower.Contains("photo") || lower.Contains("portrait") ||
+                    lower.Contains("fullscreen") || lower.Contains("button") || lower.Contains("marker") ||
+                    gname.Contains("marker") || gname.Contains("button") || gname.Contains("poi"))
+                    continue;
+                var score = t.width * r.width * t.height * r.height;
+                if (gname == "rawimage" || gname == "map image")
+                    score *= 1000f;
+                if (score > bestScore)
+                {
+                    best = t;
+                    bestScore = score;
+                    uv = r;
+                }
             }
         }
         catch { }
