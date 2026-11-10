@@ -13,10 +13,11 @@ This is an unofficial fan mod. It isn't made by or connected with the developers
 - **VR-friendly graphics:**
   - Effects that look wrong or cost too much in VR are switched off: motion blur, depth of field, screen-space reflections, volumetric clouds and tree/grass shadows.
   - Soft ambient-occlusion shading is kept.
+  - The game's haze is made lighter in VR, so near and mid-range views are clear and colourful.
   - A render-scale setting trades sharpness for speed.
 - **Menus float in front of you,** with a pointer you move with the right stick.
-- **Mission screen.** Missions are chosen on a large screen over the window blinds in the operations room. It shows time of day, preparation, enemy skill and count, infil points and the briefing.
-- **Weapon bench in VR.** The gun is shown smaller and turns like a turntable, with the parts list on the wall behind it.
+- **Mission screen.** Missions are chosen on a large screen over the window blinds in the operations room, in a cinematic military style: big mission titles, step tabs, numbered mission cards, an intel panel with the briefing, and the mission's overhead recon map behind the plan. It shows time of day, preparation, enemy skill and count, and infil points, and the button hints match your controller (Touch or pad).
+- **Weapon bench in VR.** The gun is shown smaller and turns like a turntable, with the parts list on the wall behind it, restyled to match the mission screen (solid dark cards, gold highlights). Works at every bench, including the caged areas and the range. The gun is hidden while the magazine manager is open.
 - **Faster in VR (new in 1.2.0):** foveated rendering on NVIDIA cards (full detail in the middle of each lens, less towards the edges) and lighter scope rendering.
 - **Scopes:**
   - Magnified scopes stay sharp.
@@ -152,6 +153,9 @@ All settings are in `BepInEx\config\com.operatorvr.mod.cfg`. The file is created
 - `[Rendering] AmbientOcclusion`, `TreeShadows`: switch shading and tree shadows on or off.
 - `[Menus] BenchGunSize`, `HealthArrowSize`: the weapon bench gun's size and the health-screen pointer's size.
 - `[Controls] LeanHoldTime`: how long a stick click must be held to lean.
+- `[Rendering] HazeThinning`: how much lighter the haze is in VR (4 by default; 1 = the game's haze). `NoHaze` switches it off completely.
+- `[Menus] BenchTheme`: the weapon bench restyle (on by default).
+- `[Controls] GunShiftForward`: move the gun further from your face (metres). Ctrl + Shift + Up/Down changes it while playing.
 
 ## Known limits
 
