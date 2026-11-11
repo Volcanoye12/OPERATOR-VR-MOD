@@ -110,13 +110,33 @@ Version 1.1.0 adds full motion controls for **Oculus/Meta Touch controllers**. T
 **To switch them on:** set `TouchControls = true` under `[Controls]` in `BepInEx\config\com.operatorvr.mod.cfg`. The file `OPERATOR-VR-Touch-Controls.png` in the zip shows every button.
 
 - **Aim with your hand.** The gun points where the right controller points.
-- **Virtual stock.** Press the right grip: your right hand locks as the stock and your left hand steers the gun, which makes it much steadier. Press again to let go. **GUNSTOCK ACTIVATED** shows at the lower right while it's on.
+- **Hand reloading (new in 1.3.0, Touch only).** See "Reloading by hand" below.
+- **Front of the gun:** bring your left hand to the front of the rifle (or SMG) and click the **left trigger** once to grip it. Move the hand away and it lets go. (The pistol is gripped by itself.) Away from the front, the left trigger aims down the sights.
+- **Run:** tap **A** while pushing the left stick forward; let the stick come back to stop. **Hold A** for the gun's torch.
+- **Recenter:** hold the **right grip** for a second, or hold the **right stick in** and click the **left stick**.
+- **Switch weapon by reaching:** right hand over your right shoulder + right grip = main / second weapon; right hand down at your right hip + right grip = pistol.
 - **Lean** by holding a stick click while aiming. Leaning by tilting your head is also there but off by default (`HeadLean = true`, `HeadLeanAngle`).
-- **Vibration.** Both controllers kick when you fire, with short buzzes for the stock, double-taps and Interact.
+- **Vibration.** Both controllers kick when you fire, with short buzzes for magazines, double-taps and Interact.
 - **Tap, double-tap and hold actions:**
   - **B:** tap to crouch, double-tap to vault, hold to kick.
-  - **X:** tap to reload, hold to check the magazine, double-tap to chamber a round or unjam.
-  - **Y:** tap to change fire mode, double-tap for the health and map screen.
+  - **X:** tap to drop the magazine (with hand reloading), hold to check the magazine, double-tap to chamber a round or unjam.
+  - **Y:** tap to change fire mode, hold to zoom a scope that has a zoom (e.g. the Elcan 1x/4x), double-tap for the health and map screen.
+- **Two stick D-pads.** With a thumb resting on one controller's thumbrest, the other controller's stick becomes a D-pad. That gives you sights and magnifier, lasers, grenades, recenter, night vision, next weapon and the tablet.
+- **Menus and laptops:** point the laser and pull the right trigger to click. The right stick scrolls lists. Dragging works too, for example medication on the health screen.
+- **Weapon bench:** point at the gun, hold the trigger and swing the controller to turn it.
+- **Interact:** click the right stick when the prompt shows (TAKE, OPEN, MODIFY WEAPON).
+
+### Reloading by hand
+
+1. **Drop the old magazine:** tap **X**.
+2. **Take a new one:** your spare magazines hang at your left hip. Reach down to them and squeeze the **left grip**. The magazine is in your hand.
+3. **Load it:** bring it under the gun, top end first. When it catches on the magazine well (a buzz), **push it up** a few centimetres. It clicks in and the gun reloads.
+
+**Check a magazine:** with the left hand at the gun's magazine, squeeze the **left grip**: it comes out into your hand. Hold it up to see how many rounds are left. Push it back up into the gun to put it back. Let go while it's still at the gun and it slides back in; let go away from the gun and it drops.
+
+**Picked up again:** a magazine you dropped can be picked up off the floor (reach down to it and squeeze the left grip), as long as you haven't loaded another one since.
+
+The pistol, rifles and SMGs all work this way. If a magazine won't go in, tap **X** again while it's out and the game reloads for you. With the PS5 pad nothing changes. `ManualReload = false` switches hand reloading off.
 - **Two stick D-pads.** With a thumb resting on one controller's thumbrest, the other controller's stick becomes a D-pad. That gives you sights and magnifier, lasers, grenades, recenter, night vision, next weapon and the tablet.
 - **Menus and laptops:** point the laser and pull the right trigger to click. The right stick scrolls lists. Dragging works too, for example medication on the health screen.
 - **Weapon bench:** point at the gun, hold the trigger and swing the controller to turn it.
