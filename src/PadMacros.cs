@@ -343,6 +343,7 @@ public class PadMacros : MonoBehaviour
     // same steps itself. Controls.FlipWithSightSwitch
     private const int VK_CAPITAL = 0x14;
     private bool _capsWas;
+    private int _sightPressLogs;
     private readonly System.Collections.Generic.HashSet<string> _flipLogged = new();
 
     // Spoken "magnifier up" / "flip magnifier" / "magnifier down" (VoiceCommands, 2026-11-04): flips the magnifier on
@@ -393,6 +394,13 @@ public class PadMacros : MonoBehaviour
         _capsWas = caps;
         if (!pressed || !Plugin.FlipWithSightSwitch.Value)
             return;
+        // Every press, so a zoom that "didn't work" shows whether the press arrived at all (13:50: no trace of one)
+        if (_sightPressLogs++ < 30)
+        {
+            var aimingNow = false;
+            try { var me = _zoomMe ?? s_zoomPlayer; aimingNow = me != null && me.isADS; } catch { }
+            Plugin.Logger.LogInfo($"[Pad] Sight switch pressed (left thumbrest + right stick up), aiming {aimingNow}");
+        }
 
         var all = UnityEngine.Object.FindObjectsByType(Il2CppInterop.Runtime.Il2CppType.Of<FlipSights>(), FindObjectsSortMode.None);
         foreach (var o in all)
@@ -548,6 +556,50 @@ public class PadMacros : MonoBehaviour
         finally { s_inFlip = false; }
     }
 
+    // Y while aiming with a zoom-switch scope (2026-11-11: the user tried the two-thumb D-pad zoom many times and only
+    // ever got the night vision, the mirror-image combination): tap Y = zoom in/out. Not aiming, or no such scope:
+    // false, and Y stays the fire-mode button
+    private static PlayerNetworking s_zoomPlayer;
+
+    // Y held (Touch): zoom in/out on a gun with a zoom-switch scope, aiming or not. False if the gun has none
+    internal static bool ZoomScope(string how) => Zoom(how, false);
+
+    internal static bool ZoomIfAiming() => Zoom("Y while aiming", true);
+
+    private static bool Zoom(string how, bool onlyAiming)
+    {
+        try
+        {
+            if (s_zoomPlayer == null)
+                foreach (var o in UnityEngine.Object.FindObjectsByType(Il2CppInterop.Runtime.Il2CppType.Of<PlayerNetworking>(), FindObjectsSortMode.None))
+                {
+                    var p = o.TryCast<PlayerNetworking>();
+                    if (p != null && p.gameObject.name.Contains("MyPlayer"))
+                    {
+                        s_zoomPlayer = p;
+                        break;
+                    }
+                }
+            if (s_zoomPlayer == null || s_zoomPlayer.activeWeapon == null || (onlyAiming && !s_zoomPlayer.isADS))
+                return false;
+            foreach (var s in s_zoomPlayer.activeWeapon.GetComponentsInChildren<ScopeInputSetter>(false))
+            {
+                if (s == null || s.ZoomMode != ScopeInputSetter.ZoomType.Toggle)
+                    continue;
+                s.zoomToggled = !s.zoomToggled;
+                Plugin.Logger.LogInfo($"[Pad] Scope zoom on '{s.transform.parent?.name}' switched {(s.zoomToggled ? "in" : "out")} ({how})");
+                Haptics.Pulse(UnityEngine.XR.XRNode.RightHand, 0.3f, 0.03f);
+                return true;
+            }
+        }
+        catch (Exception e)
+        {
+            s_zoomPlayer = null;
+            Plugin.Logger.LogWarning($"[Pad] Zoom: {e.GetType().Name}: {e.Message}");
+        }
+        return false;
+    }
+
     private bool ToggleScopeZoom()
     {
         if (_zoomMe == null)
@@ -566,11 +618,14 @@ public class PadMacros : MonoBehaviour
         {
             if (s == null || s.ZoomMode != ScopeInputSetter.ZoomType.Toggle)
                 continue;
-            // Not aiming: the press is the game's own sight switch (back to the scope from the gun's other sight)
-            if (!_zoomMe.isADS)
+            // With the Touch controllers, aiming or not (2026-11-11, the user: left thumbrest + right stick up zooms
+            // in, the same again zooms out, as it flips a separate magnifier). With the PS5 pad it stays as it was: not
+            // aiming, D-pad up is the game's own sight switch
+            if (!Plugin.TouchControls.Value && !_zoomMe.isADS)
                 return true;
             s.zoomToggled = !s.zoomToggled;
-            Plugin.Logger.LogInfo($"[Pad] Scope zoom on '{s.transform.parent?.name}' switched {(s.zoomToggled ? "in" : "out")} (D-pad up)");
+            Plugin.Logger.LogInfo($"[Pad] Scope zoom on '{s.transform.parent?.name}' switched {(s.zoomToggled ? "in" : "out")} (D-pad up, aiming {_zoomMe.isADS})");
+            Haptics.Pulse(UnityEngine.XR.XRNode.RightHand, 0.3f, 0.03f);
             return true;
         }
         return false;
@@ -633,14 +688,21 @@ public class PadMacros : MonoBehaviour
             // about every other time, so the scope sat away from the eye with its camera off (log: aiming, its ADS
             // not enabled, cams OFF). While aiming, D-pad up only zooms; not aiming, the game's sight switch works as
             // usual (to get back to the scope if the gun is on its other sight)
-            var aiming = false;
-            try { aiming = __instance.playerNetworking != null && __instance.playerNetworking.isADS; } catch { }
-            if (!aiming || !HasZoomSwitch(w))
+            // (Touch: aiming or not, D-pad up only zooms on such a scope, see ToggleScopeZoom. PS5 pad as before: only
+            // while aiming)
+            if (!HasZoomSwitch(w))
                 return true;
+            if (!Plugin.TouchControls.Value)
+            {
+                var aiming = false;
+                try { aiming = __instance.playerNetworking != null && __instance.playerNetworking.isADS; } catch { }
+                if (!aiming)
+                    return true;
+            }
             if (!s_zoomSkipLogged)
             {
                 s_zoomSkipLogged = true;
-                Plugin.Logger.LogInfo($"[Pad] Game's sight switch skipped on '{w.name}' while aiming (D-pad up zooms the scope instead)");
+                Plugin.Logger.LogInfo($"[Pad] Game's sight switch skipped on '{w.name}' (D-pad up zooms the scope instead)");
             }
             return false;
         }

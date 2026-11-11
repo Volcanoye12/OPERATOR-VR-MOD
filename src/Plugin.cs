@@ -10,7 +10,7 @@ public class Plugin : BasePlugin
 {
     public const string Guid = "com.operatorvr.mod";
     public const string Name = "OperatorVR";
-    public const string Version = "1.2.3";
+    public const string Version = "1.3.0";
 
     internal static ManualLogSource Logger;
     internal static ConfigEntry<OpenXRNative.RenderMode> StereoRenderMode;
@@ -25,7 +25,7 @@ public class Plugin : BasePlugin
     internal static ConfigEntry<bool> FoliageOcclusionCulling;
     internal static ConfigEntry<bool> Shadows;
     internal static ConfigEntry<bool> HideBody;
-    internal static ConfigEntry<bool> FreeLeftHand;
+    internal static ConfigEntry<bool> FreeLeftHand, FrontGripByTrigger;
     internal static ConfigEntry<bool> GunFollowsHand, SteadyGun;
     internal static ConfigEntry<bool> HideLeftArm;
     internal static ConfigEntry<bool> HideChest;
@@ -37,7 +37,8 @@ public class Plugin : BasePlugin
     internal static ConfigEntry<bool> AutoHoldBreath;
     internal static ConfigEntry<string> BenchAutoOpenName, BenchAutoOpenAt;
     internal static ConfigEntry<int> SunShadowFrames;
-    internal static ConfigEntry<bool> GpuAudit, IdleSuppressionOff, GpuSpikeWatch, LookPreview, NoHaze;
+    internal static ConfigEntry<bool> GpuAudit, IdleSuppressionOff, GpuSpikeWatch, LookPreview, NoHaze, ManualReload;
+    internal static ConfigEntry<float> WaistMagDrop, WaistMagSide, WaistMagForward, ManualReloadSpeed;
     internal static ConfigEntry<bool> WeaponBenchOnTop;
     internal static ConfigEntry<float> BenchGunSize;
     internal static ConfigEntry<float> HealthArrowSize;
@@ -56,7 +57,7 @@ public class Plugin : BasePlugin
     internal static ConfigEntry<bool> AllowDLSS;
     internal static ConfigEntry<bool> NightVisionFill;
     internal static ConfigEntry<string> EmergencyReloadKey, ManualReloadKey, TabletKey, RunKey, NextWeaponKey;
-    internal static ConfigEntry<float> GunShiftRight, GunShiftUp, GunShiftForward, RunSpeed;
+    internal static ConfigEntry<float> GunShiftRight, GunShiftUp, GunShiftForward, RunSpeed, AdsGunForward;
     internal static ConfigEntry<string> AimEye;
     internal static ConfigEntry<bool> AutoStart;
     internal static ConfigEntry<string> Runtime;
@@ -254,7 +255,7 @@ public class Plugin : BasePlugin
             "right stick turns, buttons as in TouchMap. Off = play with a gamepad (e.g. a PS5 pad through Steam Input); " +
             "the hand aim, the menu laser and the free left hand are then off too.");
         TouchMap = Config.Bind("Controls", "TouchMap",
-            "RightTrigger=Shoot, LeftTrigger=Aim, A=FlashlightsToggle,B=Crouch, X=Reload, Y=Firemode, LeftGrip=Sprint, LeftStickClick=Prone, " +
+            "RightTrigger=Shoot, LeftTrigger=Aim, A=Run, B=Crouch, X=Reload, Y=Firemode, LeftStickClick=Prone, " +
             "RightStickClick=Interact, DpadUp=SwitchBetweenSights, DpadLeft=LasersToggle, " +
             "DpadRight=SwitchGrenades, DpadDown=Recenter, LeftDpadUp=ToggleNVGs, LeftDpadLeft=NextWeapon, " +
             "LeftDpadDown=OpenATAK, LeftDpadRight=SwitchGrenades, " +
@@ -275,7 +276,7 @@ public class Plugin : BasePlugin
             "Touch button = keys pressed together when you double-tap it (instead of its normal action on the second tap). " +
             "Keys use Unity names joined with +, e.g. LeftShift+T, LeftControl+R, Mouse2. Hold: in front (B=Hold:Space, " +
             "vault) keeps them down while the button stays held (at least 0.6 s). Separate entries with commas.");
-        TouchHold = Config.Bind("Controls", "TouchHold", "B=Space",
+        TouchHold = Config.Bind("Controls", "TouchHold", "B=Space, A=Mouse3",
             "Touch button = keys tapped when you hold it down (instead of holding its own action), e.g. B=Space: tap B " +
             "crouches, hold B kicks. Keys as in TouchDoubleTap. Separate entries with commas.");
         TouchDpadButton = Config.Bind("Controls", "TouchDpadButton", "LeftThumbrest",
@@ -315,12 +316,12 @@ public class Plugin : BasePlugin
             "With the Touch controllers: while VirtualStockButton is held, the right controller is a stock locked in " +
             "place against your head, and moving the left controller left/right/up/down aims the gun (along the line " +
             "from the stock through the left hand). Let go to aim with the right controller again.");
-        VirtualStockButton = Config.Bind("Controls", "VirtualStockButton", "RightGrip",
+        VirtualStockButton = Config.Bind("Controls", "VirtualStockButton", "None",
             "The Touch button held for the virtual stock (A, B, X, Y, RightGrip, LeftGrip, ...). Don't also map it in TouchMap.");
-        LeftHandMovement = Config.Bind("Controls", "LeftHandMovement", 0.6f,
+        LeftHandMovement = Config.Bind("Controls", "LeftHandMovement", 1f,
             "How much the character's free left hand moves compared with your real left controller (0.1 to 1; 1 = the " +
             "same). Lower = calmer, smaller movements around the gun's grip.");
-        LeftHandSmoothing = Config.Bind("Controls", "LeftHandSmoothing", 6f,
+        LeftHandSmoothing = Config.Bind("Controls", "LeftHandSmoothing", 1000f,
             "How quickly the character's free left hand catches up with your controller (per second; 0.5 to 20). Lower = " +
             "slower and smoother, higher = snappier.");
         AutoSwitchControls = Config.Bind("Controls", "AutoSwitchControls", true,
@@ -367,6 +368,10 @@ public class Plugin : BasePlugin
         VirtualStockToggle = Config.Bind("Controls", "VirtualStockToggle", true,
             "On: press VirtualStockButton once to turn the virtual stock on, press it again to turn it off. Off: the " +
             "stock is on only while the button is held.");
+        FrontGripByTrigger = Config.Bind("Controls", "FrontGripByTrigger", true,
+            "With the Touch controllers, on every gun but the pistol: the left hand takes the front of the gun only when you " +
+            "bring it there and press the left trigger once (not by itself when it comes near). Move the hand away and it " +
+            "lets go. Off = it takes the front by itself as it comes near. The pistol always takes it by itself.");
         FreeLeftHand = Config.Bind("Controls", "FreeLeftHand", true,
             "In VR the character's left hand follows the left controller when you take it off the gun, and grips the gun " +
             "again when you bring it back to the front of the gun. F3 switches it off/on while playing.");
@@ -453,6 +458,10 @@ public class Plugin : BasePlugin
         GunShiftForward = Config.Bind("Controls", "GunShiftForward", 0f,
             "In VR, move the gun this far forward, away from your face (negative = back towards you), in metres. " +
             "Ctrl + Shift + Up/Down changes it by 1 cm while playing. Fades out while aiming down the sights.");
+        AdsGunForward = Config.Bind("Controls", "AdsGunForward", 0.08f,
+            "While aiming down the sights in VR, push the gun this far forward along the line of the sights, in metres " +
+            "(the sights stay lined up). In VR the game's sight came right up to the eye: looking through the scope, " +
+            "you were inside its tube.");
         // Off: in Georgia (2026-11-03) the gun drifted off the game's aim line, "kept shooting to my right" and the
         // sights wouldn't come up properly
         SteadyGun = Config.Bind("Controls", "SteadyGun", false,
@@ -485,6 +494,22 @@ public class Plugin : BasePlugin
         GpuSpikeWatch = Config.Bind("Rendering", "GpuSpikeWatch", true,
             "If the graphics card suddenly gets much slower and stays slow (e.g. 45 -> 5 fps), log what's in view and " +
             "briefly switch likely features off to find the cause ('[GpuSpike]' lines). Once per game.");
+        ManualReload = Config.Bind("Controls", "ManualReload", true,
+            "Touch controllers: reload by hand. X drops the magazine; your spares hang at your left hip: reach there and " +
+            "squeeze the left grip to take one, bring it under the gun and push it up to load. Squeeze the left grip with " +
+            "the hand at the gun's magazine to pull it out, hold it up to see what's left, push it back up to put it in. " +
+            "A dropped magazine can be picked up again (left grip, reaching down to it). Off = X reloads as the game does.");
+        // (WaistMagDrop/Side/Forward: only used when the drawn left shoulder isn't known; the belt otherwise hangs at
+        // the character's left hip, within the arm's reach)
+        WaistMagDrop = Config.Bind("Controls", "WaistMagDrop", 0.55f,
+            "How far below your eyes the belt magazines hang (metres). Bigger = lower.");
+        WaistMagSide = Config.Bind("Controls", "WaistMagSide", 0.02f,
+            "How far to the left of your middle the belt magazines start (metres). Negative = to the right.");
+        WaistMagForward = Config.Bind("Controls", "WaistMagForward", 0.30f,
+            "How far in front of your eyes the belt magazines hang (metres). Bigger = further forward.");
+        ManualReloadSpeed = Config.Bind("Controls", "ManualReloadSpeed", 30f,
+            "After a magazine clicks in by hand, the game's own reload (which does the ammo) plays this many times " +
+            "faster, so it's over in a blink (1 = normal, up to 30).");
         NoHaze = Config.Bind("Rendering", "NoHaze", false,
             "In VR, switch off the game's fog / atmosphere haze completely: distant things look sharp and colours clear, " +
             "but far trees can shimmer and the draw-distance edge shows. Rendering.HazeThinning is the gentler option.");
@@ -744,6 +769,7 @@ public class Plugin : BasePlugin
         AddComponent<OperatorVR.GpuSpikeWatch>();
         AddComponent<OperatorVR.BenchTheme>();
         AddComponent<OperatorVR.LookPreview>();
+        AddComponent<OperatorVR.ManualReload>();
         var harmony = new HarmonyLib.Harmony(Guid);
         LaptopClickLog.Apply(harmony);
 

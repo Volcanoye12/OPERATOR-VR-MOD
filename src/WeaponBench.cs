@@ -588,6 +588,22 @@ public class WeaponBench : MonoBehaviour
         _tipPosHome = _tipper.localPosition;
         _tipScaleHome = _tipper.localScale;
         _tipValueHome = _turner._zRotation;
+        _forceTipRot = true;
+        // The tip as the game left it is normally level (0°). On the 2026-11-10 21:16 visit it was -85° (tipped
+        // nearly on end by an earlier drag), and holding it there showed the MP7 end-on as a thin stick. Level is
+        // what's wanted: the level pose from an earlier visit if known, else just the value 0 and the game turns it
+        var key = _turner.name;
+        if (Mathf.Abs(_tipValueHome) < 5f)
+            s_levelTip[key] = _tipHome;
+        else
+        {
+            Plugin.Logger.LogInfo($"[Bench] The weapon was left tipped at {_tipValueHome:0}°: set level again");
+            _tipValueHome = 0f;
+            if (s_levelTip.TryGetValue(key, out var level))
+                _tipHome = level;
+            else
+                _forceTipRot = false;
+        }
         var size = Mathf.Clamp(Plugin.BenchGunSize.Value, 0.2f, 1f);
         _tipper.localScale = _tipScaleHome * size;
         Plugin.Logger.LogInfo($"[Bench] Weapon only turns round now (tip held at {_tipValueHome:0}°), shown at {size * 100f:0}% size (Menus.BenchGunSize)");
@@ -599,8 +615,12 @@ public class WeaponBench : MonoBehaviour
         if (!FindTipper())
             return;
         _turner._zRotation = _tipValueHome;
-        _tipper.localRotation = _tipHome;
+        if (_forceTipRot)
+            _tipper.localRotation = _tipHome;
     }
+
+    private bool _forceTipRot = true;
+    private static readonly Dictionary<string, Quaternion> s_levelTip = new();
 
     // A weapon put on the bench (or switched to): face it the way the first one faced, and spin it about its own middle,
     // kept on the same spot as the first ("when I changed weapons they were all at an angle", 2026-11-03)

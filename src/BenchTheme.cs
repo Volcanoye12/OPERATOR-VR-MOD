@@ -217,6 +217,7 @@ public class BenchTheme : MonoBehaviour
     // the user, 2026-11-10): hidden while the magazine manager is open. Found as the bench does it: the turntable
     // ('DragMouse') nearest the eye, then up from it to the first object with parts drawn
     private readonly List<Renderer> _gunHidden = new();
+    private bool _noGunLogged;
 
     private void HideBenchGun()
     {
@@ -225,12 +226,14 @@ public class BenchTheme : MonoBehaviour
         var cam = Camera.main;
         if (cam == null)
             return;
+        // Turned off by the game while the magazine manager is open, so not only enabled ones (the 21:16 visit: the
+        // gun stayed behind the magazine manager's middle box and nothing was hidden)
         DragMouse best = null;
-        var bestD = 3f;
-        foreach (var o in UnityEngine.Object.FindObjectsByType(Il2CppType.Of<DragMouse>(), FindObjectsSortMode.None))
+        var bestD = 6f;
+        foreach (var o in UnityEngine.Object.FindObjectsByType(Il2CppType.Of<DragMouse>(), FindObjectsInactive.Include, FindObjectsSortMode.None))
         {
             var d = o.TryCast<DragMouse>();
-            if (d == null || !d.isActiveAndEnabled)
+            if (d == null)
                 continue;
             var dist = Vector3.Distance(cam.transform.position, d.transform.position);
             if (dist < bestD)
@@ -240,7 +243,14 @@ public class BenchTheme : MonoBehaviour
             }
         }
         if (best == null)
+        {
+            if (!_noGunLogged)
+            {
+                _noGunLogged = true;
+                Plugin.Logger.LogInfo("[BenchTheme] Magazine manager open, but no weapon turntable found to hide");
+            }
             return;
+        }
         for (var t = best.transform; t != null; t = t.parent)
         {
             foreach (var r in t.GetComponentsInChildren<Renderer>(false))

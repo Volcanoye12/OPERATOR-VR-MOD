@@ -193,12 +193,48 @@ public class GunShift : MonoBehaviour
 
         // Relative to where the game aims (its camera before the head pose is added for drawing)
         var t = cam.transform;
-        var shift = (t.right * Plugin.GunShiftRight.Value + t.up * Plugin.GunShiftUp.Value + t.forward * Plugin.GunShiftForward.Value) * _shiftWeight;
+        // (Not forward for a pistol: 2026-11-11 the user saw the pistol "not even attached to the right hand" when
+        // held up. The forward shift moves the gun but not the hand; on a rifle 5 cm doesn't show, on a pistol it does)
+        // (Touch controllers only: with the PS5 pad everything stays as it was)
+        var touchPistol = Plugin.TouchControls.Value && ManualReload.PistolInHand;
+        var forward = touchPistol ? 0f : Plugin.GunShiftForward.Value;
+        var shift = (t.right * Plugin.GunShiftRight.Value + t.up * Plugin.GunShiftUp.Value + t.forward * forward) * _shiftWeight;
         // Aiming down the sights the game lines them up with its camera, which in VR sits between the eyes: neither
         // eye looks straight down them. Move the gun half the distance between the eyes towards the aiming eye
         // (Controls.AimEye), fading in as the shift above fades out
         shift += t.right * (AimEyeOffset() * (1f - _shiftWeight));
+        // And along the line of the sights, away from the eye (Controls.AdsGunForward; 2026-11-10: aiming put the eye
+        // inside the scope's tube). Straight along the game's aim, so the sights stay lined up
+        // Not for a pistol (2026-11-11): this push was added on 10 Nov for the rifle's scope, and it is why the right
+        // hand stopped holding the pistol when held out ("like it was earlier"). The pistol is held by the body's own
+        // arm, which is already straight when aiming and can't follow the gun 8 cm further: the log measured the hand
+        // a steady 7.8-8 cm short of the grip, exactly this push. The rifles bring their own arms, so they're fine
+        if (!touchPistol)
+            shift += t.forward * (Mathf.Clamp(Plugin.AdsGunForward.Value, -0.1f, 0.3f) * (1f - _shiftWeight));
         shift += SteadyCorrection(t) * _shiftWeight;
+        // The sights to your eye (Touch, not pistols; 2026-11-11, the user: after a recenter "the rifle came to my eye,
+        // it was to the right, couldn't really see down the scope". The game lines its sights up with its own camera;
+        // your eye in VR is that camera plus where your head is now compared with the last recenter (the log: recentered
+        // with the head 5 cm to one side). Aiming in, the rifle now also moves sideways/up-down by that difference, so
+        // the scope is in front of the eye you look with)
+        // (Taken out 15:45: the user "you've totally ruined aiming down the sights, it's all set to the right" — the
+        // measured eye offset is not to be trusted. Left here switched off)
+        if (false && Plugin.TouchControls.Value && !touchPistol && _shiftWeight < 0.999f && TryEye(out var eye))
+        {
+            var d = eye - t.position;
+            var side = d - t.forward * Vector3.Dot(d, t.forward);
+            // More than 12 cm off can't be a head offset: something else is wrong with the measure, so leave it alone
+            var trusted = side.magnitude < 0.12f;
+            if (trusted)
+                shift += side * (1f - _shiftWeight);
+            if (ads && !_eyeLogged)
+            {
+                _eyeLogged = true;
+                Plugin.Logger.LogInfo($"[GunShift] Aimed in: the eye is {Vector3.Dot(side, t.right) * 100f:0.0} cm right, {Vector3.Dot(side, t.up) * 100f:0.0} cm up of the game's aim line: {(trusted ? "sights moved to it" : "too far to be right, left alone")}");
+            }
+        }
+        if (!ads)
+            _eyeLogged = false;
         if (shift.sqrMagnitude < 1e-8f)
             return;
         _savedLocal.Clear();
@@ -209,6 +245,20 @@ public class GunShift : MonoBehaviour
                 m.position += shift;
         }
         _shifted = true;
+    }
+
+    private bool _eyeLogged;
+
+    // Where your eyes are in the game world (the headset's centre eye, placed as it's drawn)
+    private static bool TryEye(out Vector3 eye)
+    {
+        eye = default;
+        var d = UnityEngine.XR.InputDevices.GetDeviceAtXRNode(UnityEngine.XR.XRNode.Head);
+        if (!d.isValid)
+            return false;
+        if (!XRFeature.Vector3(d.deviceId, "CenterEyePosition", out var p) && !XRFeature.Vector3(d.deviceId, "DevicePosition", out p))
+            return false;
+        return HeadTracking.TryTrackingToWorld(p, Quaternion.identity, out eye, out _);
     }
 
     // ---- Steady gun (Controls.SteadyGun) ----

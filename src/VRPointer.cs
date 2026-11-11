@@ -81,12 +81,62 @@ public class VRPointer : MonoBehaviour
 
             FrameTarget(_target);
             PlaceCursor(_target);
+            MagManagerBack(_target);
             if (Plugin.Diagnostics.Value) LogBenchDrag(_target);
         }
         catch (Exception e)
         {
             Plugin.Logger.LogError($"[Pointer] {e.GetType().Name}: {e.Message}");
         }
+    }
+
+    // The magazine manager's Back button (2026-11-11, the user: "when you press back, clicking on back isn't doing
+    // anything"; the log had a click on 'refill mags button' but never one on Back). A press with the arrow on Back now
+    // closes the manager itself if the game hasn't a moment later. Each press there is logged with what's under the arrow
+    private bool _mmLmbWas;
+    private float _mmCloseAt = -1f;
+    private Canvas _mmCanvas;
+    private int _mmLogs;
+
+    private void MagManagerBack(Canvas target)
+    {
+        if (_mmCloseAt > 0f && Time.unscaledTime >= _mmCloseAt)
+        {
+            _mmCloseAt = -1f;
+            try
+            {
+                if (_mmCanvas != null && _mmCanvas.gameObject.activeInHierarchy)
+                {
+                    var wm = _mmCanvas.GetComponentInParent<WeaponModding>();
+                    if (wm != null)
+                    {
+                        wm.CloseMagManager();
+                        Plugin.Logger.LogInfo("[Pointer] Mag manager Back: the game didn't close it, closed it directly");
+                    }
+                }
+            }
+            catch (Exception e) { Plugin.Logger.LogWarning($"[Pointer] Mag manager Back: {e.GetType().Name}: {e.Message}"); }
+        }
+        if (target == null || !target.name.Contains("MagManager"))
+        {
+            _mmLmbWas = false;
+            return;
+        }
+        var lmb = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+        if (lmb && !_mmLmbWas)
+        {
+            TryGetMouseViewport(out var nx, out var ny);
+            var under = GraphicNameUnderMouse(target, nx, ny);
+            if (_mmLogs++ < 30)
+                Plugin.Logger.LogInfo($"[Pointer] Mag manager press at ({nx:0.00}, {ny:0.00}): under the arrow '{under}'");
+            if (under.IndexOf("close", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                under.IndexOf("back", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                _mmCanvas = target;
+                _mmCloseAt = Time.unscaledTime + 0.3f;
+            }
+        }
+        _mmLmbWas = lmb;
     }
 
     // Temporary (2026-11-01): turning the weapon on the bench stopped working again. The game's DragMouse turns it while

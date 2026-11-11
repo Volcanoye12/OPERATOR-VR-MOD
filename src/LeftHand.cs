@@ -20,7 +20,9 @@ public class LeftHand : MonoBehaviour
     public LeftHand(IntPtr ptr) : base(ptr) { }
 
     // Grab when the hand comes this close to the game's grip, let go when it is moved this far from it (metres)
-    private const float GripDistance = 0.12f;
+    // (0.12 until 2026-11-11: the user asked for the hand to take the front of the gun by itself as it comes near,
+    // no button, on every gun; they had been squeezing the grip to "grab" it)
+    private const float GripDistance = 0.16f;
     private const float ReleaseDistance = 0.26f;
     // How quickly the arm blends between the game's grip and the free hand (per second)
     private const float BlendSpeed = 8f;
@@ -133,6 +135,14 @@ public class LeftHand : MonoBehaviour
                 self.Solve();
             if (what == "HandIkApplicator")
             {
+                // The right hand onto a pistol's grip: here, where the left arm is bent too (12:14 play: done just
+                // before drawing it logged "hand moved onto it" but nothing changed in the picture)
+                try { self.PistolGrip(); }
+                catch (Exception e)
+                {
+                    if (self._pistolLogs++ < 5)
+                        Plugin.Logger.LogError($"[RightHand] pistol grip: {e.GetType().Name}: {e.Message}");
+                }
                 self.CollapseArm();
                 self.CollapseChest();
             }
@@ -166,6 +176,7 @@ public class LeftHand : MonoBehaviour
         while (true)
         {
             yield return new WaitForEndOfFrame();
+            RestoreRightArm();
             UncollapseArm();
             UncollapseChest();
             if (!_bentThisFrame || !_haveGameArm || _upper == null || _lower == null || _hand == null)
@@ -351,9 +362,130 @@ public class LeftHand : MonoBehaviour
         var off = Vector3.Distance(_hand.position, _lastSetPos);
         Plugin.Logger.LogInfo($"[LeftHand] Check before drawing: hand {off:0.000} m from where it was put, " +
                               $"{Vector3.Distance(_hand.position, _lastTarget):0.00} m short of the controller, " +
-                              $"{Vector3.Distance(_hand.position, _rightHand.position):0.00} m from the right hand, " +
+                              $"{Vector3.Distance(_hand.position, RightPos()):0.00} m from the right hand, " +
                               $"forearm end {Vector3.Distance(_lower.position, _hand.position):0.00} m from the hand " +
                               $"(last placed after {_lastHook ?? "LateUpdate"})");
+    }
+
+    // ---- The right hand on a pistol's grip (2026-11-11) ----
+    // The user, three plays running: "the right hand is not holding the pistol". In the footage the character's right
+    // hand is drawn open, about 8 cm to the right of the Glock's grip, whenever the left hand is off it (the game's
+    // own pose for the body's arm; on the rifles the hand sits on the grip). Just before drawing, the right arm is
+    // bent so the hand's hold point (between palm and thumb) is at the pistol's grip (the middle of its magazine,
+    // from ManualReload) and the fingers are closed round it; the game's own pose is put back once the frame is drawn,
+    // so nothing the game reads from the hand changes.
+    internal static Vector3 PistolGripAt;
+    internal static int PistolGripFrame = -10;
+    /// <summary>The pistol's own magazine and its middle in the magazine's axes (set by ManualReload).</summary>
+    internal static Transform PistolMag;
+    internal static Vector3 PistolMagLocal;
+    private Transform _rBonesFor, _rIndex, _rPinky, _rThumb;
+    private readonly System.Collections.Generic.List<Transform[]> _rFingers = new();
+    private readonly System.Collections.Generic.List<(Transform t, Quaternion local)> _rSaved = new();
+    private float _rWeight, _nextPistolLog;
+    private int _pistolLogs;
+    private static readonly float[] RightCurl = { 40f, 45f, 25f };
+
+    private void PistolGrip()
+    {
+        RestoreRightArm();
+        var want = ManualReload.PistolInHand && PistolGripFrame >= Time.frameCount - 2 && _rightHand != null && PistolMag != null;
+        _rWeight = Mathf.MoveTowards(_rWeight, want ? 1f : 0f, Time.unscaledDeltaTime * 8f);
+        if (!want || _rWeight <= 0.001f)
+            return;
+        // Where the grip is right now (the pistol may have moved since ManualReload last looked)
+        PistolGripAt = PistolMag.TransformPoint(PistolMagLocal);
+        var lower = _rightHand.parent;
+        var upper = lower != null ? lower.parent : null;
+        if (upper == null)
+            return;
+        if (_rBonesFor != _rightHand)
+        {
+            _rBonesFor = _rightHand;
+            _rIndex = _rPinky = _rThumb = null;
+            _rFingers.Clear();
+            var all = _rightHand.GetComponentsInChildren<Transform>(true);
+            [Il2CppInterop.Runtime.Attributes.HideFromIl2Cpp]
+            Transform Bone(string n)
+            {
+                foreach (var t in all)
+                    if (t != null && t.name.Equals(n, StringComparison.OrdinalIgnoreCase))
+                        return t;
+                return null;
+            }
+            foreach (var f in new[] { "index", "middle", "ring", "pinky" })
+            {
+                var j = new[] { Bone($"{f}_01_r"), Bone($"{f}_02_r"), Bone($"{f}_03_r") };
+                if (j[0] != null && j[1] != null)
+                    _rFingers.Add(j);
+            }
+            _rIndex = Bone("index_01_r");
+            _rPinky = Bone("pinky_01_r") ?? Bone("ring_01_r");
+            _rThumb = Bone("thumb_02_r") ?? Bone("thumb_01_r");
+            Plugin.Logger.LogInfo($"[RightHand] Pistol grip: right hand bones index '{_rIndex?.name}', little '{_rPinky?.name}', thumb '{_rThumb?.name}', {_rFingers.Count} fingers");
+        }
+        if (_rIndex == null || _rPinky == null || _rThumb == null)
+            return;
+        var palm = (_rightHand.position + _rIndex.position + _rPinky.position) / 3f;
+        var hold = Vector3.Lerp(palm, _rThumb.position, 0.5f);
+        var delta = PistolGripAt - hold;
+        var far = delta.magnitude;
+        if (_pistolLogs < 12 && Time.unscaledTime >= _nextPistolLog)
+        {
+            _nextPistolLog = Time.unscaledTime + 3f;
+            _pistolLogs++;
+            Plugin.Logger.LogInfo($"[RightHand] Pistol grip: the hand's hold point is {far * 100f:0.0} cm from the pistol's grip ({Quaternion.Inverse(_rightHand.rotation) * delta} in the hand's axes){(far > 0.30f ? ": too far, left alone" : far < 0.015f ? ": fine as it is" : ": hand moved onto it")}");
+        }
+        // Measured and logged only (12:35): with the forward pushes off for pistols (GunShift) the game's own hold
+        // should be back as it was. Moving the hand here is kept for when the log still shows it short by 3 cm or more
+        if (far < 0.03f || far > 0.30f)
+            return;
+        RestoreRightArm();
+        _rSaved.Add((upper, upper.localRotation));
+        _rSaved.Add((lower, lower.localRotation));
+        _rSaved.Add((_rightHand, _rightHand.localRotation));
+        var rot = _rightHand.rotation;
+        var was = _rightHand.position;
+        var goal = was + delta * _rWeight;
+        SolveTwoBone(upper, lower, _rightHand, goal, lower.position);
+        _rightHand.rotation = rot;
+        // 12:30 play: the hand still stopped short with the pistol held out. In the footage the arm is dead straight:
+        // the body's arm isn't long enough to reach where the pistol is drawn (the rifles bring their own arms). The
+        // whole arm is moved the rest of the way from the shoulder (the body it hangs from isn't drawn in VR)
+        var miss = goal - _rightHand.position;
+        if (miss.sqrMagnitude > 2.5e-5f)
+        {
+            _rUpper = upper;
+            _rUpperLocal = upper.localPosition;
+            upper.position += miss;
+        }
+        // Everything else here goes by where the GAME holds the right hand (RightPos takes this move off again)
+        _rShift = _rightHand.position - was;
+        _rShiftFrame = Time.frameCount;
+        // (The fingers are left as the game has them: the 12:30 footage showed them wrongly bent by the curl tried
+        // here, "not gripping the pistol as it was earlier")
+    }
+
+    private Transform _rUpper;
+    private Vector3 _rUpperLocal;
+
+    private Vector3 _rShift;
+    private int _rShiftFrame = -1;
+
+    /// <summary>Where the game holds the right hand (without PistolGrip's move this frame).</summary>
+    private Vector3 RightPos() =>
+        _rSaved.Count > 0 && _rShiftFrame == Time.frameCount ? _rightHand.position - _rShift : _rightHand.position;
+
+    private void RestoreRightArm()
+    {
+        if (_rUpper != null)
+        {
+            try { _rUpper.localPosition = _rUpperLocal; } catch { }
+            _rUpper = null;
+        }
+        for (var i = _rSaved.Count - 1; i >= 0; i--)
+            try { if (_rSaved[i].t != null) _rSaved[i].t.localRotation = _rSaved[i].local; } catch { }
+        _rSaved.Clear();
     }
 
     [System.Runtime.InteropServices.DllImport("user32.dll")]
@@ -549,6 +681,16 @@ public class LeftHand : MonoBehaviour
             return;
 
         CalmFreeHand(gamePos, gameRot, gameYaw, ref freePos, ref freeRot);
+        ReloadPose(ref freePos, ref freeRot);
+        // A magazine sliding in the gun's well (ManualReload): the hand is eased onto it, and off again after
+        if (_railShiftFrame != Time.frameCount)
+        {
+            _railShiftFrame = Time.frameCount;
+            _railShift = Vector3.Lerp(_railShift, RailOn ? Vector3.ClampMagnitude(RailShiftWant, 0.3f) : Vector3.zero,
+                                      1f - Mathf.Exp(-RailShiftRate * Time.unscaledDeltaTime));
+        }
+        freePos += _railShift;
+        RailShiftUsed = _railShift;
         var targetPos = Vector3.Lerp(gamePos, freePos, _free);
         var targetRot = Quaternion.Slerp(gameRot, freeRot, _free);
         // Elbow down and out to the left of the body
@@ -559,6 +701,76 @@ public class LeftHand : MonoBehaviour
         _bentThisFrame = true;
         _lastSetPos = _hand.position;
         _lastTarget = targetPos;
+        HandAt = _hand.position;
+        HandAtFrame = Time.frameCount;
+        try { OnHandPlaced?.Invoke(_hand, targetRot); } catch { }
+    }
+
+    /// <summary>Called each time the drawn left hand has been placed (the hand bone, hand turn): ManualReload puts
+    /// the magazine in it then, so it's in the hand that's drawn, not where the controller is.</summary>
+    internal static Action<Transform, Quaternion> OnHandPlaced;
+
+    // ---- Reloading by hand (ManualReload) ----
+    // While the hand is at the belt, holding a magazine or pulling one out, it's drawn where the controller really
+    // is (not relative to the gun), so it lines up with the belt magazines and the magazine in it; it doesn't snap
+    // back onto the gun meanwhile.
+
+    /// <summary>Set by ManualReload: draw the left hand at the real controller (near the belt; near the gun it's drawn
+    /// relative to the gun as usual, so it lines up with it).</summary>
+    internal static bool ReloadHand;
+    /// <summary>Set by ManualReload: the hand doesn't snap onto the gun's grip (holding a magazine, at the belt).</summary>
+    internal static bool KeepOffGun;
+    /// <summary>Set by ManualReload while the game's sped-up reload runs after a hand insert: the hand isn't the game's.</summary>
+    internal static bool KeepThroughGameReload;
+    /// <summary>Set by TouchKeys (left trigger with the hand off the gun): put the hand on the front grip now, from
+    /// wherever the controller is.</summary>
+    internal static bool RequestGrabFront;
+    /// <summary>The free left hand is near enough the front grip (30 cm) for the left trigger to put it there.</summary>
+    internal static bool CanGrabFront;
+    /// <summary>The drawn left shoulder (top of the arm), and in which frame: ManualReload hangs the belt within its reach.</summary>
+    internal static Vector3 ShoulderAt;
+    internal static int ShoulderFrame = -10;
+    /// <summary>The left hand is on the gun's grip right now.</summary>
+    internal static bool Gripped => s_instance != null && s_instance._gripped;
+    /// <summary>Set by ManualReload while a magazine slides in the gun's well: the drawn hand is moved by
+    /// RailShiftWant so it stays on the magazine. RailShiftUsed is what the hand was last moved by.</summary>
+    internal static bool RailOn;
+    internal static Vector3 RailShiftWant, RailShiftUsed;
+    /// <summary>How quickly the hand is eased onto the magazine (per second): gentler at the belt.</summary>
+    internal static float RailShiftRate = 18f;
+    private Vector3 _railShift;
+    private int _railShiftFrame = -1;
+    /// <summary>The drawn hand's turn compared with the controller's (learnt while gripping the gun).</summary>
+    internal static Quaternion RotOffset => s_instance != null ? s_instance._rotOffset : Quaternion.identity;
+    /// <summary>Where the drawn left hand (wrist) was last put, and in which frame.</summary>
+    internal static Vector3 HandAt;
+    internal static int HandAtFrame = -1;
+    /// <summary>Where the left controller puts the hand relative to the gun (gripped or not), and in which frame.</summary>
+    /// <summary>Where the game's grip for the left hand on the gun is (the front grip), and in which frame.</summary>
+    internal static Vector3 GripAt;
+    internal static int GripAtFrame = -1;
+    internal static Vector3 HandOnGunAt;
+    /// <summary>The same without the learnt grip offset: your left controller exactly where it is relative to the
+    /// right one, mapped onto the gun.</summary>
+    internal static Vector3 HandOnGunRawAt;
+    internal static int HandOnGunFrame = -1;
+    private float _reloadBlend;
+    private int _reloadBlendFrame = -1;
+
+    private void ReloadPose(ref Vector3 freePos, ref Quaternion freeRot)
+    {
+        if (_reloadBlendFrame != Time.frameCount)
+        {
+            _reloadBlendFrame = Time.frameCount;
+            _reloadBlend = Mathf.MoveTowards(_reloadBlend, ReloadHand ? 1f : 0f, Time.unscaledDeltaTime * 6f);
+        }
+        if (_reloadBlend <= 0.001f || !TryGetController(XRNode.LeftHand, out var p, out var r) ||
+            !HeadTracking.TryGetGameAim(out var pitch, out var yaw))
+            return;
+        var realPos = p + Quaternion.Euler(pitch, yaw, 0f) * _posOffset;
+        var realRot = r * _rotOffset;
+        freePos = Vector3.Lerp(freePos, realPos, _reloadBlend);
+        freeRot = Quaternion.Slerp(freeRot, realRot, _reloadBlend);
     }
 
     // The free left hand waved about "way too quickly" (2026-11-04): it copied every move of the controller, full size
@@ -579,7 +791,7 @@ public class LeftHand : MonoBehaviour
         var inv = Quaternion.Inverse(aimRot);
         var scale = Mathf.Clamp(Plugin.LeftHandMovement.Value, 0.1f, 1f);
         var wantPos = gamePos + (freePos - gamePos) * scale;
-        var wantRel = inv * (wantPos - _rightHand.position);
+        var wantRel = inv * (wantPos - RightPos());
         var wantRot = Quaternion.Slerp(gameRot, freeRot, scale);
         var wantRotRel = inv * wantRot;
 
@@ -587,13 +799,13 @@ public class LeftHand : MonoBehaviour
         if (!_calmHave || _free <= 0.001f)
         {
             _calmHave = true;
-            _calmRel = inv * (gamePos - _rightHand.position);
+            _calmRel = inv * (gamePos - RightPos());
             _calmRot = inv * gameRot;
         }
         var k = 1f - Mathf.Exp(-Mathf.Max(0.5f, Plugin.LeftHandSmoothing.Value) * Time.unscaledDeltaTime);
         _calmRel = Vector3.Lerp(_calmRel, wantRel, k);
         _calmRot = Quaternion.Slerp(_calmRot, wantRotRel, k);
-        freePos = _rightHand.position + aimRot * _calmRel;
+        freePos = RightPos() + aimRot * _calmRel;
         freeRot = aimRot * _calmRot;
     }
 
@@ -603,7 +815,7 @@ public class LeftHand : MonoBehaviour
         if (_hand == null || _rightHand == null)
             return;
         var inv = Quaternion.Inverse(_rightHand.rotation);
-        _gameLocalPos = inv * (_hand.position - _rightHand.position);
+        _gameLocalPos = inv * (_hand.position - RightPos());
         _gameLocalRot = inv * _hand.rotation;
         _haveGamePose = true;
     }
@@ -617,9 +829,17 @@ public class LeftHand : MonoBehaviour
         if (_hand == null || _rightHand == null || !_haveGamePose || _solvedFrame == Time.frameCount)
             return;
         _solvedFrame = Time.frameCount;
+        if (_upper != null)
+        {
+            ShoulderAt = _upper.position;
+            ShoulderFrame = Time.frameCount;
+        }
         if (!Targets(out _, out _, out var freePos, out _, out var local, out var gamePitch, out var gameYaw))
             return;
         var aimRot = Quaternion.Euler(gamePitch, gameYaw, 0f);
+        HandOnGunAt = freePos;
+        HandOnGunRawAt = RightPos() + aimRot * local;
+        HandOnGunFrame = Time.frameCount;
 
         // Is the game's hand at its usual grip, or is the game using it for something (door, reload)?
         if (!_haveUsual)
@@ -658,21 +878,65 @@ public class LeftHand : MonoBehaviour
                 ? $"[LeftHand] The game is using the left hand ({fromUsual:0.00} m from the grip): it's the game's until done"
                 : "[LeftHand] The game is done with the left hand");
         }
+        // The game's magazine check, started by the hand at the magazine (ManualReload): the game's animation has
+        // the left hand until it's over, wherever the controller is
+        // The game's own (sped-up) reload after a magazine was pushed in by hand (ManualReload): the hand stays where
+        // your controller is instead of jumping into the game's reload pose for a quarter of a second and back
+        if (KeepThroughGameReload)
+        {
+            _free = Mathf.MoveTowards(_free, 1f, Time.unscaledDeltaTime * BlendSpeed * 2f);
+            return;
+        }
         if (_gameBusy)
         {
             _free = Mathf.MoveTowards(_free, 0f, Time.unscaledDeltaTime * BlendSpeed);
             return;
         }
 
-        var gamePos = _rightHand.position + _rightHand.rotation * _usualLocalPos;
+        GripAt = RightPos() + _rightHand.rotation * _usualLocalPos;
+        GripAtFrame = Time.frameCount;
+        // Reloading by hand: the hand stays off the gun
+        if (KeepOffGun)
+        {
+            if (_gripped)
+            {
+                _gripped = false;
+                Plugin.Logger.LogInfo("[LeftHand] Off the gun for a hand reload");
+            }
+            _free = Mathf.MoveTowards(_free, 1f, Time.unscaledDeltaTime * BlendSpeed);
+            return;
+        }
+
+        var gamePos = RightPos() + _rightHand.rotation * _usualLocalPos;
         var gameRot = _rightHand.rotation * _usualLocalRot;
+        // Left trigger with the hand off the gun: onto the front grip from where the controller is now. Where it is now
+        // becomes "on the grip" (the learnt offset is set to it), so it stays on until you move it well away again
+        if (RequestGrabFront)
+        {
+            RequestGrabFront = false;
+            var want = Quaternion.Inverse(aimRot) * (gamePos - RightPos()) - local;
+            var was = Vector3.Distance(freePos, gamePos);
+            _posOffset = Vector3.ClampMagnitude(want, 0.15f);
+            freePos = RightPos() + aimRot * (local + _posOffset);
+            if (!_gripped)
+            {
+                _gripped = true;
+                Haptics.Pulse(XRNode.LeftHand, 0.5f, 0.05f);
+                Plugin.Logger.LogInfo($"[LeftHand] Left trigger: hand put on the front grip ({was:0.00} m from it)");
+            }
+        }
         var gripGap = Vector3.Distance(freePos, gamePos);
+        // Controls.FrontGripByTrigger (2026-11-11, the user: "it's grabbing the weapon all the time now instead of
+        // grabbing the magazine"): on guns other than the pistol the front is taken only by the left trigger, with
+        // the hand brought near it (within 30 cm)
+        var byTrigger = Plugin.FrontGripByTrigger.Value && Plugin.TouchControls.Value && !ManualReload.PistolInHand;
+        CanGrabFront = !_gripped && gripGap < 0.30f;
         if (_gripped && gripGap > ReleaseDistance)
         {
             _gripped = false;
             Plugin.Logger.LogInfo($"[LeftHand] Let go of the gun ({gripGap:0.00} m from the grip; hand offset {local}, learnt {_posOffset})");
         }
-        else if (!_gripped && gripGap < GripDistance)
+        else if (!_gripped && gripGap < GripDistance && !byTrigger)
         {
             _gripped = true;
             Plugin.Logger.LogInfo($"[LeftHand] Gripped the gun ({gripGap:0.00} m from the grip)");
@@ -682,7 +946,9 @@ public class LeftHand : MonoBehaviour
         // and grabbing again happen where you'd expect (the controllers' origins aren't the character's wrists)
         if (_gripped && _free <= 0.001f && gripGap < ReleaseDistance)
         {
-            var want = Quaternion.Inverse(aimRot) * (gamePos - _rightHand.position) - local;
+            var want = Quaternion.Inverse(aimRot) * (gamePos - RightPos()) - local;
+            // (15 cm, as before 16:33: raised to 35 cm with the left-trigger grab, the learnt offset grew to 30 cm forward
+            // in the 16:35 play and the free hand was drawn far from the controller — "hand not grabbing properly")
             _posOffset = Vector3.Lerp(_posOffset, Vector3.ClampMagnitude(want, 0.15f), Time.unscaledDeltaTime * 0.5f);
             _rotOffset = Quaternion.Slerp(_rotOffset, Quaternion.Inverse(_lastRotFromCtrl) * gameRot, Time.unscaledDeltaTime * 0.5f);
         }
@@ -711,7 +977,7 @@ public class LeftHand : MonoBehaviour
         var aimRot = Quaternion.Euler(gamePitch, gameYaw, 0f);
         var toGame = aimRot * Quaternion.Inverse(ctrlFrame);
 
-        gamePos = _rightHand.position + _rightHand.rotation * _gameLocalPos;
+        gamePos = RightPos() + _rightHand.rotation * _gameLocalPos;
         gameRot = _rightHand.rotation * _gameLocalRot;
 
         local = Quaternion.Inverse(ctrlFrame) * (leftPos - rightPos);
@@ -722,7 +988,7 @@ public class LeftHand : MonoBehaviour
             _rotOffset = Quaternion.Inverse(handRotFromCtrl) * gameRot;
             _haveRotOffset = true;
         }
-        freePos = _rightHand.position + aimRot * (local + _posOffset);
+        freePos = RightPos() + aimRot * (local + _posOffset);
         freeRot = handRotFromCtrl * _rotOffset;
         return true;
     }

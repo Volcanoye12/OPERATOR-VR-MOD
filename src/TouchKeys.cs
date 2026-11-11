@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using Il2CppInterop.Runtime;
@@ -195,6 +195,12 @@ public class TouchKeys : MonoBehaviour
                         Set(m, false);
                     continue;
                 }
+                // Magazine pulled out by hand (ManualReload): the gun doesn't fire until one goes back in
+                if (ManualReload.MagOut && string.Equals(m.Action, "Shoot", StringComparison.OrdinalIgnoreCase))
+                {
+                    Set(m, false);
+                    continue;
+                }
                 if (inMenu && (m.Button == "A" || string.Equals(m.Button, clickButton, StringComparison.OrdinalIgnoreCase) ||
                                string.Equals(m.Action, "Shoot", StringComparison.OrdinalIgnoreCase)))
                 {
@@ -221,6 +227,8 @@ public class TouchKeys : MonoBehaviour
             // In a menu the right stick's up/down scrolls (the mouse wheel); on the bench too, for its parts list
             UpdateMenuScroll(inMenu ? look.y : 0f);
             UpdateHeadLean(inMenu);
+            UpdateHoldRecenter(right, inMenu);
+            UpdateStickRecenter(right);
             UpdateSway(Plugin.HandAimNoSway.Value && (Plugin.HandAimPitch.Value || Plugin.HandAimYaw.Value));
             StockOn = _stockOn && Time.unscaledTime - _stockLastCall < 0.5f;
             var curve = look.sqrMagnitude > 0.15f * 0.15f ? look * look.magnitude : Vector2.zero; // finer near the centre
@@ -359,7 +367,7 @@ public class TouchKeys : MonoBehaviour
             _interactSent = true;
             _sentAt = now;
             Set(m, true);
-            Plugin.Logger.LogInfo($"[Touch] Interact pressed (aim {_lastAimGap:0.0}° off where you look)");
+            Plugin.Logger.LogInfo($"[Touch] Interact pressed (aim {_lastAimGap:0.0}Â° off where you look)");
             Haptics.Pulse(XRNode.RightHand, 0.25f, 0.03f);
         }
 
@@ -393,7 +401,7 @@ public class TouchKeys : MonoBehaviour
     /// In a range booth (near its target switch, whose parts are named "Forwards" = move the target away and
     /// "Backwards" = bring it back): gun pointing ahead (or at the switch) uses Forwards, pointing at the floor uses
     /// Backwards, calling its Interact() this frame as the game does while F is held on it. Picking the small part by
-    /// looking at it was awkward in VR. The switch sits low, so aiming at it already points the gun ~20-30° down:
+    /// looking at it was awkward in VR. The switch sits low, so aiming at it already points the gun ~20-30Â° down:
     /// only a clear point at the floor means back.
     /// Returns true if one was used.
     /// </summary>
@@ -442,7 +450,7 @@ public class TouchKeys : MonoBehaviour
         if (_lastUsedHandle == null || _lastUsedHandle.Pointer != best.Pointer)
         {
             _lastUsedHandle = best;
-            Plugin.Logger.LogInfo($"[Touch] Range switch '{best.name}' (value {best.value:0.##}) used, gun {gunDown:0}° down " +
+            Plugin.Logger.LogInfo($"[Touch] Range switch '{best.name}' (value {best.value:0.##}) used, gun {gunDown:0}Â° down " +
                                   $"({bestDist:0.00} m away)");
         }
         return true;
@@ -545,7 +553,7 @@ public class TouchKeys : MonoBehaviour
     /// <summary>
     /// Mouse pixels (right/down = positive) that move the game's aim towards where the right controller points:
     /// up/down if pitch, left/right if yaw. The game's mouse sensitivity is unknown, so this is a proportional
-    /// loop: each frame closes part of the gap. Up/down was confirmed to go the right way (gaps stay under ~3°).
+    /// loop: each frame closes part of the gap. Up/down was confirmed to go the right way (gaps stay under ~3Â°).
     /// The view doesn't follow (head + view yaw); only the game's aim, which the weapon follows, does.
     /// </summary>
     private Vector2 HandAimCorrection(UnityEngine.XR.InputDevice right, bool pitch, bool yaw)
@@ -583,7 +591,7 @@ public class TouchKeys : MonoBehaviour
         var yawGap = yaw ? Mathf.DeltaAngle(gameYaw, handYaw) : 0f;
 
         // Guard: if the game turned the opposite way to the mouse the yaw loop would spin the player round. It used to
-        // switch left/right aim off for the session when the gap stayed over 60° for a second, but that also happens
+        // switch left/right aim off for the session when the gap stayed over 60Â° for a second, but that also happens
         // when the game just won't turn for a moment (an animation, a scene change), and then the gun felt locked
         // for the rest of the game. Now only a gap still growing after a second counts as a spin, and aim comes back
         // after 3 s
@@ -605,7 +613,7 @@ public class TouchKeys : MonoBehaviour
                 {
                     _yawFailed = true;
                     _yawRetryAt = Time.unscaledTime + 3f;
-                    Plugin.Logger.LogWarning($"[Touch] Left/right hand aim is running away (gap {_yawGapAtStart:0}° -> {yawGap:0}° in a second); paused for 3 s");
+                    Plugin.Logger.LogWarning($"[Touch] Left/right hand aim is running away (gap {_yawGapAtStart:0}Â° -> {yawGap:0}Â° in a second); paused for 3 s");
                     // Twice it ran away with the virtual stock on (2026-11-04): switch the stock off cleanly too
                     ResetStock("the aim ran away");
                     yawGap = 0f;
@@ -622,8 +630,8 @@ public class TouchKeys : MonoBehaviour
         {
             _aimLogs++;
             _nextAimLog = Time.unscaledTime + 1f;
-            Plugin.Logger.LogInfo($"[Touch] Hand aim: pitch hand {handPitch:0.0}° game {gamePitch:0.0}°, yaw hand {handYaw:0.0}° game {gameYaw:0.0}° " +
-                                  $"(view {_viewYaw:0.0}°) -> mouse {px.x:0.0}, {px.y:0.0} px");
+            Plugin.Logger.LogInfo($"[Touch] Hand aim: pitch hand {handPitch:0.0}Â° game {gamePitch:0.0}Â°, yaw hand {handYaw:0.0}Â° game {gameYaw:0.0}Â° " +
+                                  $"(view {_viewYaw:0.0}Â°) -> mouse {px.x:0.0}, {px.y:0.0} px");
         }
         return px;
     }
@@ -634,7 +642,7 @@ public class TouchKeys : MonoBehaviour
     // left/right and up/down by exactly as much as the line from the stock to the left hand does since you pressed,
     // starting from where the right hand was aiming (no jump).
     // History (2026-11-04): engaging by bringing the hands together jumped and flickered. The next version turned a
-    // whole frame built on the line, and the log showed it engaging with the left hand 60-97° off the aim (beside the
+    // whole frame built on the line, and the log showed it engaging with the left hand 60-97Â° off the aim (beside the
     // right hand, not in front): the aim then moved sideways to the hand and was hard to steer, and in toggle mode it
     // stayed on with the aim stuck ("controls went static"). Now it engages only with the left hand in front, uses
     // plain left/right + up/down changes, and switches itself off if the left hand leaves (taken off the gun)
@@ -643,7 +651,9 @@ public class TouchKeys : MonoBehaviour
     private Vector3 _stockLine0, _stockLine, _stockAim0;
     private Vector3 _stockPivot;     // the right controller where you pressed, in the head's yaw frame (tracking space)
     private bool _stockButtonWas, _stockToggled, _stockSqueezed, _stockVoiceOn;
+    private float _stockPressStart;
     private float _stockToggledAt = -10f;
+    private IntPtr _stockGun;
 
     /// <summary>The stock button, with a firm squeeze needed and a clear release (for the grip or a trigger).</summary>
     private bool StockButtonDown()
@@ -751,7 +761,7 @@ public class TouchKeys : MonoBehaviour
             return 1f / (1f + tau / dt);
         }
 
-        // Left/right (around the circle, so 359° -> 1° is a 2° step) and up/down, each filtered on its own
+        // Left/right (around the circle, so 359Â° -> 1Â° is a 2Â° step) and up/down, each filtered on its own
         var yawStep = Mathf.DeltaAngle(_smYaw, yaw);
         var dYaw = yawStep / dt;
         _smDYaw += Alpha(dCutoff, dt) * (dYaw - _smDYaw);
@@ -870,7 +880,7 @@ public class TouchKeys : MonoBehaviour
         if (want != 0)
             Press(want < 0 ? (int)KeyCode.Q : (int)KeyCode.E, true);
         Plugin.Logger.LogInfo($"[Touch] Head lean: {(want < 0 ? "lean left" : want > 0 ? "lean right" : "upright")} " +
-                              $"(tilt {_lastTilt:0.0}°, your upright is {_tiltRest:0.0}°)");
+                              $"(tilt {_lastTilt:0.0}Â°, your upright is {_tiltRest:0.0}Â°)");
         _headLean = want;
     }
 
@@ -907,7 +917,14 @@ public class TouchKeys : MonoBehaviour
         // leaving it on with the right hand ignored (log 2026-11-04, Georgia): a squeeze counts past 75% and the grip
         // must open below 35% before the next, and a toggle needs 0.4 s since the last
         var button = Plugin.VirtualStock.Value && StockButtonDown();
-        var pressedNow = button && !_stockButtonWas && Time.unscaledTime - _stockToggledAt > 0.4f;
+        // In toggle mode the toggle now happens when the button is let go, and only after a short press: held for a
+        // second the right grip recenters instead (UpdateHoldRecenter; the user chose it, 2026-11-10)
+        if (button && !_stockButtonWas)
+            _stockPressStart = Time.unscaledTime;
+        var pressedNow = Plugin.VirtualStockToggle.Value
+            ? !button && _stockButtonWas && Time.unscaledTime - _stockPressStart < HoldRecenterTime && !_gripRecentered &&
+              Time.unscaledTime - _stockToggledAt > 0.4f
+            : button && !_stockButtonWas && Time.unscaledTime - _stockToggledAt > 0.4f;
         if (pressedNow)
         {
             _stockToggled = !_stockToggled;
@@ -916,6 +933,21 @@ public class TouchKeys : MonoBehaviour
         _stockButtonWas = button;
         if (!Plugin.VirtualStock.Value)
             _stockToggled = false;
+        // 2026-11-11 (12:01 play): the user squeezed the right grip to take hold of the pistol, which switched the
+        // stock on: the pistol then followed the LEFT hand ("the gun started in the middle of the left hand, couldn't
+        // grip it with the right hand"), and it stayed on for the rifles after. A pistol has no stock: never on with
+        // one. And a stock left on doesn't carry over to the next gun
+        if (ManualReload.PistolInHand || ManualReload.GunId != _stockGun)
+        {
+            _stockGun = ManualReload.GunId;
+            if (_stockOn || _stockToggled || _stockVoiceOn)
+                ResetStock(ManualReload.PistolInHand ? "a pistol has no stock" : "another gun");
+            if (ManualReload.PistolInHand)
+            {
+                VoiceBridge.TakeStockCommand();
+                return handDir;
+            }
+        }
         // Spoken "activate gunstock" / "deactivate gunstock" (VoiceCommands). Already on: just answer again
         var spoken = VoiceBridge.TakeStockCommand();
         if (spoken == 1)
@@ -965,7 +997,7 @@ public class TouchKeys : MonoBehaviour
                 _stockLine0 = _stockLine = line;
                 _stockAim0 = handDir;
                 _stockAwaySince = -1f;
-                Plugin.Logger.LogInfo($"[Touch] Virtual stock on (left hand {dist * 100f:0} cm from the stock, {off:0}° off " +
+                Plugin.Logger.LogInfo($"[Touch] Virtual stock on (left hand {dist * 100f:0} cm from the stock, {off:0}Â° off " +
                                       "the aim): moving the left hand aims");
             }
         }
@@ -1037,15 +1069,53 @@ public class TouchKeys : MonoBehaviour
         }
         if (!Buttons.TryGetValue(button, out var b))
             return false;
+        // Manual reload (Controls.ManualReload): the left grip takes magazines from the belt, so it doesn't sprint
+        // while the hand is there or holding one
+        if (ManualReload.TakesLeftGrip && string.Equals(button, "LeftGrip", StringComparison.OrdinalIgnoreCase))
+            return false;
+        // Right stick held in + left stick click = recenter (UpdateStickRecenter): that left click isn't Prone
+        if (s_stickComboLeft && string.Equals(button, "LeftStickClick", StringComparison.OrdinalIgnoreCase))
+            return false;
         var d = InputDevices.GetDeviceAtXRNode(b.hand);
         if (!d.isValid)
             return false;
         if (b.analog)
-            return XRFeature.Float(d.deviceId, b.usage, out var v) && v > 0.5f;
+        {
+            var down = XRFeature.Float(d.deviceId, b.usage, out var v) && v > 0.5f;
+            if (string.Equals(button, "LeftTrigger", StringComparison.OrdinalIgnoreCase) && LeftTriggerGrabs(down))
+                return false;
+            return down;
+        }
         var have = XRFeature.Bool(d.deviceId, b.usage, out var p);
         if (button == "Menu")
             LogMenuRaw(have, p);
         return have && p;
+    }
+
+    // Left trigger with the left hand off the gun (2026-11-11, the user: "once you've reloaded and you move your hand
+    // to the gun, one click of the trigger attaches your hand to the front of the gun"; they chose the left trigger):
+    // that press puts the hand on the front grip (LeftHand.RequestGrabFront) and doesn't aim; held on past that, or
+    // pressed with the hand already on the gun, it aims as before. Not while holding a magazine
+    private static int s_trigFrame = -1;
+    private static bool s_trigWas, s_trigGrabbing, s_trigResult;
+
+    private static bool LeftTriggerGrabs(bool down)
+    {
+        if (s_trigFrame == Time.frameCount)
+            return s_trigResult;
+        s_trigFrame = Time.frameCount;
+        // (Only with the hand near the front grip: away from the gun the left trigger aims as normal)
+        if (down && !s_trigWas && Plugin.TouchControls.Value && Plugin.FreeLeftHand.Value && !LeftHand.Gripped &&
+            LeftHand.CanGrabFront && !ManualReload.HoldingMagazine)
+        {
+            s_trigGrabbing = true;
+            LeftHand.RequestGrabFront = true;
+        }
+        if (!down)
+            s_trigGrabbing = false;
+        s_trigWas = down;
+        s_trigResult = s_trigGrabbing;
+        return s_trigResult;
     }
 
     // The left menu button never reached the game in testing (SteamVR / Virtual Desktop may keep it for their own
@@ -1168,7 +1238,7 @@ public class TouchKeys : MonoBehaviour
 
     // Bench drag (2026-11-04): with the arrow on the weapon (empty space, not the page), holding the click and swinging
     // the right controller left/right turns the weapon, as dragging with the mouse does. The game's own drag reads the
-    // mouse's movement, and the laser places the arrow without any (the log: "weapon turned 0.0°" on every press)
+    // mouse's movement, and the laser places the arrow without any (the log: "weapon turned 0.0Â°" on every press)
     private bool _benchDragging, _benchClickWas;
     private float _benchDragYaw;
 
@@ -1320,8 +1390,13 @@ public class TouchKeys : MonoBehaviour
                     {
                         // No double tap to wait for: a short press of the button's own key now
                         LogTap(m, "tap");
-                        Set(m, true);
-                        Go(TapState.TapOut);
+                        if (ReloadByHand(m))
+                            Go(TapState.Idle);
+                        else
+                        {
+                            Set(m, true);
+                            Go(TapState.TapOut);
+                        }
                     }
                 }
                 else if (now - dt.Since >= DoubleTapWindow)
@@ -1332,6 +1407,13 @@ public class TouchKeys : MonoBehaviour
                         Plugin.Logger.LogInfo($"[Touch] Hold on {m.Button}");
                         StartCombo(dt.HoldKeys, false);
                         goto case TapState.Combo;
+                    }
+                    // Y held (2026-11-11, the user: "Y as a longer press for the scope; a quick press changes fire
+                    // rate"): on a gun with a zoom scope, a long press of the Firemode button zooms in/out
+                    if (string.Equals(m.Action, "Firemode", StringComparison.OrdinalIgnoreCase) && PadMacros.ZoomScope("Y held"))
+                    {
+                        Go(TapState.Holding);
+                        break;
                     }
                     // Long press: hold the button's own key for as long as the button is held
                     LogTap(m, "hold");
@@ -1360,8 +1442,13 @@ public class TouchKeys : MonoBehaviour
                 {
                     // Just one tap: a short press of the button's own key
                     LogTap(m, "tap");
-                    Set(m, true);
-                    Go(TapState.TapOut);
+                    if (ReloadByHand(m))
+                        Go(TapState.Idle);
+                    else
+                    {
+                        Set(m, true);
+                        Go(TapState.TapOut);
+                    }
                 }
                 break;
 
@@ -1400,6 +1487,124 @@ public class TouchKeys : MonoBehaviour
                 break;
         }
     }
+
+    // Recenter by holding the right stick down for a moment, no other button (2026-11-10: the user flicked it down
+    // without the left thumb on its thumbrest, which the D-pad's DpadDown=Recenter needs, and nothing happened; the
+    // gun was then too close to the face). Right stick down does nothing else in play (TouchLookUpDown 0, the hand
+    // aims up/down)
+    // Recenter: hold the RIGHT GRIP for a second (the user's choice, 2026-11-10, after holding the right stick down
+    // proved awkward: the pushes reached only a third to half way, mostly sideways). A short squeeze still toggles the
+    // virtual stock (now on release, see VirtualStock)
+    private const float HoldRecenterTime = 1f;
+    private float _recenterHeld;
+    private bool _recenterDone, _gripRecentered, _recenterGripDown;
+
+    // ---- Weapon switching by reaching (the user, 2026-11-10) ----
+    // Right hand over the right shoulder + grip: the second main weapon (and back to the main one); right hand down
+    // at the right hip + grip: the pistol. Measured from the real head, in its left/right heading. Such a squeeze
+    // neither recenters nor toggles the virtual stock
+    private int _lastSlot = 2;          // 2 = main weapon (Alpha2), 3 = second main (Alpha3), 1 = pistol (Alpha1)
+    private int _switchKeyUp, _switchLogs;
+    private float _switchKeyUpAt = -1f;
+
+    /// <summary>On a fresh right-grip squeeze: if the hand is at the shoulder or hip, switch weapon; true if it did.</summary>
+    private bool GestureSwitch()
+    {
+        var head = InputTracking.GetLocalPosition(XRNode.CenterEye);
+        var hand = InputTracking.GetLocalPosition(XRNode.RightHand);
+        var yaw = Quaternion.Euler(0f, InputTracking.GetLocalRotation(XRNode.CenterEye).eulerAngles.y, 0f);
+        var rel = Quaternion.Inverse(yaw) * (hand - head);   // x right, y up, z forward from the eyes
+        var shoulder = rel.x > 0.02f && rel.y > -0.25f && rel.z < 0.12f;
+        var hip = rel.x > 0.05f && rel.y < -0.5f && rel.z < 0.3f;
+        if (_switchLogs++ < 30)
+            Plugin.Logger.LogInfo($"[Touch] Right grip squeezed with the hand at {rel.x * 100f:0} cm right, {rel.y * 100f:0} cm up, " +
+                                  $"{rel.z * 100f:0} cm forward of the eyes: {(shoulder ? "shoulder" : hip ? "hip" : "neither")}");
+        int slot;
+        if (shoulder)
+            slot = _lastSlot == 2 ? 3 : 2;
+        else if (hip)
+            slot = 1;
+        else
+            return false;
+        var key = slot == 1 ? 49 : slot == 2 ? 50 : 51;   // KeyCode.Alpha1/2/3: the game's SwitchSecondary/Primary/SecondPrimary
+        Press(key, true);
+        _switchKeyUp = key;
+        _switchKeyUpAt = Time.unscaledTime + 0.08f;
+        _lastSlot = slot;
+        Haptics.Pulse(XRNode.RightHand, 0.5f, 0.06f);
+        Plugin.Logger.LogInfo($"[Touch] Reached to the {(shoulder ? "shoulder" : "hip")}: {(slot == 1 ? "pistol" : slot == 2 ? "main weapon" : "second weapon")}");
+        return true;
+    }
+
+    // Recenter by the sticks (2026-11-11, the user: the recenter didn't seem to work; "when you hold down the right
+    // stick, as in click, and then you click the left stick while the right one is pressed, it re-centers"). The left
+    // click doesn't go prone while the right stick is held in (IsPressed), until it's let go
+    private static bool s_stickComboLeft;
+    private bool _leftClickWas;
+
+    private void UpdateStickRecenter(UnityEngine.XR.InputDevice right)
+    {
+        var left = InputDevices.GetDeviceAtXRNode(XRNode.LeftHand);
+        var rightIn = right.isValid && XRFeature.Bool(right.deviceId, "Primary2DAxisClick", out var r) && r;
+        var leftIn = left.isValid && XRFeature.Bool(left.deviceId, "Primary2DAxisClick", out var l) && l;
+        if (leftIn && !_leftClickWas && rightIn)
+        {
+            s_stickComboLeft = true;
+            HeadTracking.RequestRecenter();
+            Haptics.Pulse(XRNode.RightHand, 0.7f, 0.12f);
+            Haptics.Pulse(XRNode.LeftHand, 0.7f, 0.12f);
+            Plugin.Logger.LogInfo("[Touch] Right stick held in + left stick click: recenter");
+        }
+        if (!leftIn)
+            s_stickComboLeft = false;
+        _leftClickWas = leftIn;
+    }
+
+    private void UpdateHoldRecenter(UnityEngine.XR.InputDevice right, bool inMenu)
+    {
+        if (_switchKeyUpAt > 0f && Time.unscaledTime >= _switchKeyUpAt)
+        {
+            Press(_switchKeyUp, false);
+            _switchKeyUpAt = -1f;
+        }
+        var v = 0f;
+        if (right.isValid)
+            XRFeature.Float(right.deviceId, "Grip", out v);
+        var wasDown = _recenterGripDown;
+        _recenterGripDown = _recenterGripDown ? v > 0.35f : v > 0.75f;
+        // A fresh squeeze at the shoulder or hip switches weapon, and that squeeze does nothing else (the flag stays
+        // set until the next squeeze, so the stock's let-go check sees it whichever runs first)
+        if (_recenterGripDown && !wasDown)
+        {
+            _gripRecentered = false;
+            if (!inMenu && !WeaponBench.Open && GestureSwitch())
+            {
+                _recenterDone = true;
+                _gripRecentered = true;
+            }
+        }
+        if (!_recenterGripDown || inMenu || WeaponBench.Open)
+        {
+            _recenterHeld = 0f;
+            if (!_recenterGripDown)
+                _recenterDone = false;
+            return;
+        }
+        _recenterHeld += Time.unscaledDeltaTime;
+        if (_recenterDone || _recenterHeld < HoldRecenterTime)
+            return;
+        _recenterDone = true;
+        _gripRecentered = true;
+        HeadTracking.RequestRecenter();
+        Haptics.Pulse(XRNode.RightHand, 0.7f, 0.12f);
+        Plugin.Logger.LogInfo("[Touch] Right grip held: recenter");
+    }
+
+    // A tap of the Reload button with hand reloading on drops the magazine instead (ManualReload.AskDrop)
+    // (A tap of Y while aiming zoomed the scope 13:53-15:00; now a tap of Y is always the fire mode and a long press
+    // zooms, see the FirstDown case)
+    private static bool ReloadByHand(Mapping m) =>
+        string.Equals(m.Action, "Reload", StringComparison.OrdinalIgnoreCase) && ManualReload.AskDrop();
 
     // 2026-11-04: left stick right (grenades) seemed to do nothing and single taps left no trace: log them
     private static int s_tapLogs;
@@ -1521,7 +1726,7 @@ public class TouchKeys : MonoBehaviour
     // Auto-ADS (2026-11-04, "Can we have auto-ADS"): raise the gun to your face and the game aims down the sights, as
     // if the Aim button (left trigger) were held; lower it and it stops. "At your face" = the right controller within
     // Controls.AutoAdsDistance of the eyes and pointing within AutoAdsAngle of where you look. It lets go a little
-    // further out (5 cm, 10°) so it doesn't flicker at the edge. The left trigger still aims as before
+    // further out (5 cm, 10Â°) so it doesn't flicker at the edge. The left trigger still aims as before
     private bool _autoAdsOn;
     private int _autoAdsLogs;
 
@@ -1546,7 +1751,7 @@ public class TouchKeys : MonoBehaviour
         var on = dist <= maxDist && angle <= maxAngle;
         if (on != _autoAdsOn && _autoAdsLogs++ < 20)
             Plugin.Logger.LogInfo($"[Touch] Auto-ADS {(on ? "on" : "off")}: hand {dist * 100f:0} cm from the eyes, " +
-                                  $"pointing {angle:0}° off where you look");
+                                  $"pointing {angle:0}Â° off where you look");
         _autoAdsOn = on;
         return on;
     }

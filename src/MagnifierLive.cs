@@ -312,6 +312,90 @@ public class MagnifierLive : MonoBehaviour
             Plugin.Logger.LogInfo($"[Scope] '{r.name}' not aimed: lens dark until you aim in");
     }
 
+    // Settled: the scope's camera turning slower than SettleSpeed degrees a second for SettleTime. Once shown it stays
+    // shown for the rest of that aim (normal aiming about doesn't blank it), and it's shown after SettleGiveUp anyway
+    // (13:50 play: the turning test said "settled" 0.06 s into every aim, yet the slice was still there: the camera
+    // isn't turning in the world. It's a "Dual Render" scope, which may move or re-aim its camera inside the scope as
+    // the gun comes to the eye. So now the camera must also be still relative to the scope itself, and the first 0.8 s
+    // of the first aims are logged: where the camera sits in the scope, which way it looks, its field of view)
+    private const float SettleSpeed = 20f, SettleMove = 0.03f, SettleTime = 0.08f, SettleGiveUp = 0.9f;
+    private readonly Dictionary<IntPtr, (int frame, float start, Vector3 fwd, Vector3 lpos, Vector3 lfwd, float calm, bool shown, float nextLog)> _settle = new();
+    private int _settleLogs;
+
+    [Il2CppInterop.Runtime.Attributes.HideFromIl2Cpp]
+    private bool Settled(UltimateScopes.ScopeController sc, Camera cam)
+    {
+        var key = cam.Pointer;
+        var fwd = cam.transform.forward;
+        var st = sc.transform;
+        var lpos = st.InverseTransformPoint(cam.transform.position);
+        var lfwd = st.InverseTransformDirection(fwd);
+        var fresh = !_settle.TryGetValue(key, out var s) || Time.frameCount - s.frame > StallFrames + 2;
+        if (fresh)
+        {
+            s = (Time.frameCount, Time.unscaledTime, fwd, lpos, lfwd, 0f, false, Time.unscaledTime);   // a new aim
+            _settleLogs++;
+        }
+        var since = Time.unscaledTime - s.start;
+        if (_settleLogs <= 6 && since <= 0.8f && Time.unscaledTime >= s.nextLog)
+        {
+            s.nextLog = Time.unscaledTime + 0.1f;
+            Plugin.Logger.LogInfo($"[Scope] aim {_settleLogs} at {since:0.00} s: camera in the scope at ({lpos.x * 100f:0.0}, {lpos.y * 100f:0.0}, {lpos.z * 100f:0.0}) cm looking ({lfwd.x:0.000}, {lfwd.y:0.000}, {lfwd.z:0.000}), fov {cam.fieldOfView:0.0}, near {cam.nearClipPlane:0.000}, lens shown {s.shown}");
+        }
+        if (!s.shown)
+        {
+            var dt = Mathf.Max(1e-4f, Time.unscaledDeltaTime);
+            var speed = Mathf.Max(Vector3.Angle(s.fwd, fwd), Vector3.Angle(s.lfwd, lfwd)) / dt;
+            var move = Vector3.Distance(s.lpos, lpos) * st.lossyScale.x / dt;
+            s.calm = speed < SettleSpeed && move < SettleMove ? s.calm + dt : 0f;
+            var aimedFor = Time.unscaledTime - s.start;
+            if (s.calm >= SettleTime || aimedFor >= SettleGiveUp)
+            {
+                s.shown = true;
+                if (_logs++ < 60)
+                    Plugin.Logger.LogInfo($"[Scope] '{cam.name}' picture shown {aimedFor:0.00} s into the aim ({(aimedFor >= SettleGiveUp ? "still turning, shown anyway" : "settled")})");
+            }
+        }
+        s.frame = Time.frameCount;
+        s.fwd = fwd;
+        s.lpos = lpos;
+        s.lfwd = lfwd;
+        _settle[key] = s;
+        return s.shown;
+    }
+
+    // The pale slice in the scope (15:26 footage: a pale band down the right of the Elcan's picture for the whole time
+    // aimed, not just at the start). Its camera sits inside the scope 2.6 cm off its middle (the "Dual Render"
+    // parallax, log) and draws everything from 1 cm in front of it: the scope's own insides, its front lens and the
+    // gun's parts can end up in its picture. A real scope shows nothing that close, so with the Touch controllers the
+    // scope camera now starts drawing 30 cm out. (PS5 pad: as the game has it)
+    private const float ScopeNear = 0.30f;
+    private readonly Dictionary<IntPtr, (Camera cam, float near)> _nearWas = new();
+
+    [Il2CppInterop.Runtime.Attributes.HideFromIl2Cpp]
+    private void NearClip(Camera cam)
+    {
+        var key = cam.Pointer;
+        if (Plugin.TouchControls.Value)
+        {
+            if (cam.nearClipPlane < ScopeNear - 0.001f)
+            {
+                if (!_nearWas.ContainsKey(key))
+                {
+                    _nearWas[key] = (cam, cam.nearClipPlane);
+                    if (_logs++ < 60)
+                        Plugin.Logger.LogInfo($"[Scope] '{cam.name}': draws from {ScopeNear * 100f:0} cm out (was {cam.nearClipPlane * 100f:0.#} cm), so nothing of the scope or gun gets into its picture");
+                }
+                cam.nearClipPlane = ScopeNear;
+            }
+        }
+        else if (_nearWas.TryGetValue(key, out var was))
+        {
+            try { cam.nearClipPlane = was.near; } catch { }
+            _nearWas.Remove(key);
+        }
+    }
+
     [Il2CppInterop.Runtime.Attributes.HideFromIl2Cpp]
     private void KeepScope(UltimateScopes.ScopeController sc)
     {
@@ -322,7 +406,18 @@ public class MagnifierLive : MonoBehaviour
         s_lastDrawn.TryGetValue(key, out var last);
         if (Time.frameCount - last <= StallFrames)
         {
-            // The game draws it (you're aimed in)
+            // The game draws it (you're aimed in). (12:56-13:08 the lens was kept dark until the scope "lined up with
+            // the eye": the measured angle was 28-38° every aim, so it stayed black 1.5 s each time — the user: "it's
+            // all a mess". Taken out.) The wall slice sliding across the lens at the start of each aim (still there
+            // 13:31) is the scope's camera still swinging in with the gun. Now the lens stays dark only while that
+            // camera is turning quickly at the start of an aim, and shows as soon as it has settled
+            NearClip(cam);
+            // (Touch controllers only: with the PS5 pad the lens shows as it always did)
+            if (Plugin.TouchControls.Value && !Settled(sc, cam))
+            {
+                LensOn(sc, false);
+                return;
+            }
             LensOn(sc, true);
             if (_scopeDrawing.Remove(key) && _logs++ < 40)
                 Plugin.Logger.LogInfo($"[Scope] '{sc.name}': aimed in, the game draws it again");

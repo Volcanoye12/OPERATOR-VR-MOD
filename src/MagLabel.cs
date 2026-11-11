@@ -35,9 +35,15 @@ public class MagLabel : MonoBehaviour
         using var __t = ModTime.Measure("MagLabel");
         try
         {
-            if (!OpenXRBootstrap.IsRunning || !Plugin.ExactMagCount.Value)
+            var inHand = Time.frameCount - s_handFrame <= 1;
+            if (!OpenXRBootstrap.IsRunning || (!Plugin.ExactMagCount.Value && !inHand))
             {
                 Hide();
+                return;
+            }
+            if (inHand)
+            {
+                ShowHand();
                 return;
             }
             var held = TouchKeys.GameHasFocus() && (GetAsyncKeyState(VK_R) & 0x8000) != 0;
@@ -132,6 +138,57 @@ public class MagLabel : MonoBehaviour
         {
             _logged = true;
             Plugin.Logger.LogInfo($"[Mag] Magazine check: showing '{count}' above '{mag.name}'");
+        }
+    }
+
+    // ---- A magazine pulled out by hand and held up in view (ManualReload, 2026-11-11) ----
+    // The same label (round count and the line-per-round picture) beside the magazine in the left hand
+    private static int s_handFrame = -10, s_handAmmo, s_handMax;
+    private static Vector3 s_handPos;
+    private bool _handLogged;
+
+    /// <summary>Called each frame the pulled-out magazine is held in view: its middle and what's in it.</summary>
+    internal static void ShowInHand(Vector3 magMiddle, int ammo, int max)
+    {
+        s_handFrame = Time.frameCount;
+        s_handPos = magMiddle;
+        s_handAmmo = ammo;
+        s_handMax = max;
+    }
+
+    private void ShowHand()
+    {
+        var cam = Camera.main;
+        if (cam == null)
+        {
+            Hide();
+            return;
+        }
+        if (_go == null)
+            Create();
+        if (_go == null)
+            return;
+        var count = $"{s_handAmmo}\n<size=60%>/ {s_handMax}</size>";
+        if (_text.text != count)
+            _text.text = count;
+        // Beside the magazine (to the right of it as you look), facing the eye
+        var pos = s_handPos + cam.transform.right * 0.09f;
+        var t = _go.transform;
+        t.position = pos;
+        t.rotation = Quaternion.LookRotation(pos - cam.transform.position, Vector3.up);
+        if (_model != null && _model.activeSelf)
+            _model.SetActive(false);
+        if (_outline != null && !_outline.activeSelf)
+            _outline.SetActive(true);
+        DrawRounds(s_handAmmo, s_handMax);
+        if (MenusOnTop.Layer >= 0 && _go.layer != MenusOnTop.Layer)
+            SetLayer(t, MenusOnTop.Layer);
+        if (!_go.activeSelf)
+            _go.SetActive(true);
+        if (!_handLogged)
+        {
+            _handLogged = true;
+            Plugin.Logger.LogInfo($"[Mag] Pulled-out magazine held up: showing {s_handAmmo} / {s_handMax} beside it");
         }
     }
 

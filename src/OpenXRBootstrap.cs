@@ -401,6 +401,8 @@ public class OpenXRBootstrap : MonoBehaviour
 
     // ---- Native callback (OpenXRLoaderBase.ReceiveNativeEvent) ----
 
+    private static long s_unfocusedAt;
+
     private static void OnNativeEvent(NativeEvent e, ulong payload)
     {
         var self = s_instance;
@@ -418,6 +420,22 @@ public class OpenXRBootstrap : MonoBehaviour
                 break;
             case NativeEvent.XrFocused:
                 Log("Headset focused: you should now see the game in VR");
+                // Back after the headset was off or the Quest menu was up for a while (a pause, the bathroom): the
+                // head is somewhere else now, so recenter on it once it has settled (the user, 2026-11-10)
+                if (s_unfocusedAt > 0 && Environment.TickCount64 - s_unfocusedAt > 3000)
+                    HeadTracking.RecenterAfter(1500, $"back after {(Environment.TickCount64 - s_unfocusedAt) / 1000} s away from the game");
+                s_unfocusedAt = 0;
+                break;
+            case NativeEvent.XrVisible:
+            case NativeEvent.XrSynchronized:
+            case NativeEvent.XrIdle:
+                if (s_unfocusedAt == 0)
+                    s_unfocusedAt = Environment.TickCount64;
+                break;
+            case NativeEvent.XrChangedSpaceApp:
+                // The headset's own recenter (holding the Oculus button), or its floor/space reset after it was put
+                // back on: follow it
+                HeadTracking.RecenterAfter(800, "the headset reset its space (Oculus button held, or put back on)");
                 break;
             case NativeEvent.XrStopping:
                 TryRun("session stopping", () =>

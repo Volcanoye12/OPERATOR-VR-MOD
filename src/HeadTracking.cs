@@ -122,6 +122,24 @@ public class HeadTracking : MonoBehaviour
     /// The game's own camera pitch and yaw in degrees (pitch positive = looking down, Unity's convention), without
     /// the head pose. The view doesn't use them (head + view yaw), but the game aims the weapon with them.
     /// </summary>
+    // A recenter asked for directly (the Touch controls), not through a pressed F10: the 22:03 play held the right
+    // stick down and no recenter happened, the simulated F10 never seen
+    private static bool s_recenterAsked;
+
+    internal static void RequestRecenter() => s_recenterAsked = true;
+
+    // A recenter a moment from now (any thread: the headset's own events come in on the runtime's thread). The user,
+    // 2026-11-10: after a pause (headset off for the bathroom) the head comes back somewhere else, so wherever it is
+    // then becomes the standing spot
+    private static long s_recenterAtTick;
+    private static string s_recenterWhy;
+
+    internal static void RecenterAfter(int milliseconds, string why)
+    {
+        s_recenterWhy = why;
+        System.Threading.Interlocked.Exchange(ref s_recenterAtTick, Environment.TickCount64 + milliseconds);
+    }
+
     internal static bool TryGetGameAim(out float pitch, out float yaw)
     {
         pitch = yaw = 0f;
@@ -202,10 +220,18 @@ public class HeadTracking : MonoBehaviour
         // F10, or Head.RecenterKey (U by default: the user's pad sends it on L1 + Create, and the game doesn't use it),
         // so the view can be put right from the pad after stepping away
         var down = (GetAsyncKeyState(VK_F10) & 0x8000) != 0 || (RecenterKeyCode() != 0 && (GetAsyncKeyState(RecenterKeyCode()) & 0x8000) != 0);
-        if (down && !_f10Down)
+        if ((down && !_f10Down) || s_recenterAsked)
         {
             _haveOrigin = false;
-            Plugin.Logger.LogInfo("[Head] Recenter requested");
+            Plugin.Logger.LogInfo($"[Head] Recenter requested{(s_recenterAsked ? " (controller)" : "")}");
+        }
+        s_recenterAsked = false;
+        var at = System.Threading.Interlocked.Read(ref s_recenterAtTick);
+        if (at > 0 && Environment.TickCount64 >= at)
+        {
+            System.Threading.Interlocked.Exchange(ref s_recenterAtTick, 0);
+            _haveOrigin = false;
+            Plugin.Logger.LogInfo($"[Head] Recenter: {s_recenterWhy}");
         }
         _f10Down = down;
 
@@ -323,6 +349,18 @@ public class HeadTracking : MonoBehaviour
             if (!Plugin.PositionalTracking.Value)
                 relPos = Vector3.zero;
             relPos *= 1f - AimLock();
+            // With the Touch controllers, aiming in: the sideways and up/down part of where your head is (compared with
+            // the last recenter) fades out, so your eye is on the sight line wherever your head is (2026-11-11 17:13, the
+            // user: "the sights weren't perfectly central, a bit to the right" — the recenter just before caught the head
+            // 7 cm to one side). Forward/back still moves. (LockEyeWhenAiming off; the PS5 pad unchanged)
+            // (Switched off 17:25: straight after it went in the user said "the aiming is not right, I can't look down the
+            // scope properly". Aiming is back as it was before 17:16)
+            if (false && Plugin.TouchControls.Value && !Plugin.LockEyeWhenAiming.Value)
+            {
+                var side = SideLock();
+                relPos.x *= 1f - side;
+                relPos.y *= 1f - side;
+            }
 
             var t = _cam.transform;
             // If onBeforeRender fires again before a restore, keep the game's pose from the first call
@@ -407,6 +445,23 @@ public class HeadTracking : MonoBehaviour
     // Turning the head still looks around
     private float _aimLock;
     private bool _aimLogged;
+
+    private float _sideLock;
+    private bool _sideLogged;
+
+    private float SideLock()
+    {
+        var ads = false;
+        FindPlayer();
+        try { ads = _player != null && _player.isADS; } catch { }
+        _sideLock = Mathf.MoveTowards(_sideLock, ads ? 1f : 0f, Time.unscaledDeltaTime / 0.15f);
+        if (ads && !_sideLogged)
+        {
+            _sideLogged = true;
+            Plugin.Logger.LogInfo("[Head] Aiming (Touch): eye brought onto the sight line (sideways/up-down head offset faded out)");
+        }
+        return _sideLock;
+    }
 
     private float AimLock()
     {
